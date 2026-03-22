@@ -4,9 +4,22 @@ version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "quictorrent"
+name = "qt"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { workspace = true }
-tracing = { workspace = true }
+qt-protocol  = { path = "../qt-protocol" }
+qt-transport = { path = "../qt-transport" }
+qt-peer      = { path = "../qt-peer" }
+qt-pieces    = { path = "../qt-pieces" }
+qt-tracker   = { path = "../qt-tracker" }
+qt-dht       = { path = "../qt-dht" }
+tokio        = { workspace = true }
+tracing      = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap         = { version = "4", features = ["derive"] }
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+anyhow       = "1"
+hex          = "0.4"
+dirs-next    = "2"

@@ -41,7 +41,7 @@ pub fn num_pieces(file_size: u64, piece_length: u32) -> u32 {
 }
 
 /// Descripción de un archivo dentro del torrent.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileEntry {
     /// Ruta relativa al directorio raíz del torrent.
     pub path: Vec<String>,
@@ -89,7 +89,7 @@ impl FileEntry {
 }
 
 /// Metainfo completo del torrent quictorrent.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Metainfo {
     /// Nombre del torrent (directorio raíz para multi-file).
     pub name: String,

@@ -2,7 +2,7 @@ use crate::error::{ProtocolError, Result};
 
 /// Prioridad de descarga de un archivo. 9 niveles.
 /// Se transmite como u8 en el protocolo wire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
 pub enum Priority {
     Minimum  = 0,
