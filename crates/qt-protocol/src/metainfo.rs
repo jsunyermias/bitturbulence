@@ -1,203 +1,162 @@
-use bendy::decoding::{Decoder, DictDecoder, Object};
-use crate::{
-    error::{ProtocolError, Result},
-    info_hash::{InfoHash, InfoHashV1, InfoHashV2},
-};
+use crate::priority::Priority;
 
+/// Calcula el tamaño de pieza óptimo para un archivo dado su tamaño en bytes.
+/// Siempre potencia de 2. Nunca mayor que el tamaño del archivo.
+///
+/// Tabla de rangos:
+///   <      1 MB  →     4 KB
+///   <      8 MB  →    16 KB
+///   <     64 MB  →    64 KB
+///   <    512 MB  →   256 KB
+///   <      4 GB  →     1 MB
+///   <     32 GB  →     4 MB
+///   <    256 GB  →    16 MB
+///   <    512 GB  →    64 MB
+///   >=   512 GB  →   256 MB
+pub fn piece_length_for_size(file_size: u64) -> u32 {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+
+    let piece_len = match file_size {
+        s if s <    1 * MB             => 4  * KB,
+        s if s <    8 * MB             => 16 * KB,
+        s if s <   64 * MB             => 64 * KB,
+        s if s <  512 * MB             => 256 * KB,
+        s if s <    4 * GB             => 1  * MB,
+        s if s <   32 * GB             => 4  * MB,
+        s if s <  256 * GB             => 16 * MB,
+        s if s <  512 * GB             => 64 * MB,
+        _                              => 256 * MB,
+    };
+    // No puede ser mayor que el archivo
+    if file_size == 0 { return 4 * KB as u32; }
+    piece_len.min(file_size) as u32
+}
+
+/// Número de piezas para un archivo dado su tamaño y el tamaño de pieza.
+pub fn num_pieces(file_size: u64, piece_length: u32) -> u32 {
+    if file_size == 0 { return 0; }
+    ((file_size + piece_length as u64 - 1) / piece_length as u64) as u32
+}
+
+/// Descripción de un archivo dentro del torrent.
 #[derive(Debug, Clone)]
-pub struct FileInfo {
+pub struct FileEntry {
+    /// Ruta relativa al directorio raíz del torrent.
     pub path: Vec<String>,
-    pub length: u64,
-    pub pieces_root: Option<[u8; 32]>,
+    /// Tamaño en bytes.
+    pub size: u64,
+    /// Tamaño de pieza calculado automáticamente.
+    pub piece_length: u32,
+    /// Número de piezas.
+    pub num_pieces: u32,
+    /// Hashes SHA-256 de cada pieza (32 bytes × num_pieces).
+    pub piece_hashes: Vec<[u8; 32]>,
+    /// Prioridad inicial de descarga.
+    pub priority: Priority,
 }
 
-#[derive(Debug, Clone)]
-pub struct Info {
-    pub name: String,
-    pub piece_length: u64,
-    pub pieces: Option<Vec<u8>>,
-    pub meta_version: Option<u8>,
-    pub length: Option<u64>,
-    pub files: Option<Vec<FileInfo>>,
-    pub raw_bytes: Vec<u8>,
-}
-
-impl Info {
-    pub fn info_hash_v1(&self) -> Option<InfoHashV1> {
-        self.pieces.as_ref().map(|_| InfoHashV1::from_info_dict(&self.raw_bytes))
-    }
-    pub fn info_hash_v2(&self) -> Option<InfoHashV2> {
-        (self.meta_version == Some(2)).then(|| InfoHashV2::from_info_dict(&self.raw_bytes))
-    }
-    pub fn info_hash(&self) -> Option<InfoHash> {
-        match (self.info_hash_v1(), self.info_hash_v2()) {
-            (Some(v1), Some(v2)) => Some(InfoHash::Hybrid { v1, v2 }),
-            (Some(v1), None)     => Some(InfoHash::V1(v1)),
-            (None, Some(v2))     => Some(InfoHash::V2(v2)),
-            (None, None)         => None,
+impl FileEntry {
+    pub fn new(path: Vec<String>, size: u64, priority: Priority) -> Self {
+        let piece_length = piece_length_for_size(size);
+        let n = num_pieces(size, piece_length);
+        Self {
+            path,
+            size,
+            piece_length,
+            num_pieces: n,
+            piece_hashes: vec![[0u8; 32]; n as usize],
+            priority,
         }
     }
-    pub fn total_length(&self) -> u64 {
-        self.length.unwrap_or_else(|| {
-            self.files.as_deref().unwrap_or(&[]).iter().map(|f| f.length).sum()
-        })
+
+    /// Longitud real de la última pieza (puede ser menor que piece_length).
+    pub fn last_piece_length(&self) -> u32 {
+        if self.num_pieces == 0 { return 0; }
+        let rem = (self.size % self.piece_length as u64) as u32;
+        if rem == 0 { self.piece_length } else { rem }
+    }
+
+    /// Longitud de la pieza `index` (la última puede ser más corta).
+    pub fn piece_len(&self, index: u32) -> u32 {
+        if index + 1 == self.num_pieces {
+            self.last_piece_length()
+        } else {
+            self.piece_length
+        }
     }
 }
 
+/// Metainfo completo del torrent quictorrent.
 #[derive(Debug, Clone)]
 pub struct Metainfo {
-    pub info: Info,
-    pub announce: Option<String>,
-    pub announce_list: Option<Vec<Vec<String>>>,
+    /// Nombre del torrent (directorio raíz para multi-file).
+    pub name: String,
+    /// Info hash SHA-256 del metainfo serializado.
+    pub info_hash: [u8; 32],
+    /// Lista de archivos. Cada uno tiene su propio piece_length.
+    pub files: Vec<FileEntry>,
+    /// Trackers opcionales.
+    pub trackers: Vec<String>,
+    /// Comentario opcional.
     pub comment: Option<String>,
-    pub created_by: Option<String>,
-    pub creation_date: Option<i64>,
 }
 
 impl Metainfo {
-    pub fn from_bytes(data: &[u8]) -> Result<Self> {
-        let mut decoder = Decoder::new(data);
-        let obj = decoder.next_object()
-            .map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))?
-            .ok_or_else(|| ProtocolError::BencodeDecodeError("empty input".into()))?;
+    /// Tamaño total de todos los archivos.
+    pub fn total_size(&self) -> u64 {
+        self.files.iter().map(|f| f.size).sum()
+    }
 
-        let mut dict = match obj {
-            Object::Dict(d) => d,
-            _ => return Err(ProtocolError::BencodeDecodeError("top-level must be a dict".into())),
-        };
-
-        let mut announce = None;
-        let mut announce_list = None;
-        let mut comment = None;
-        let mut created_by = None;
-        let mut creation_date = None;
-        let mut info_raw: Option<Vec<u8>> = None;
-
-        while let Some((key, value)) = dict.next_pair()
-            .map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))?
-        {
-            match key {
-                b"announce"      => { if let Object::Bytes(b) = value { announce = Some(String::from_utf8_lossy(b).into_owned()); } }
-                b"comment"       => { if let Object::Bytes(b) = value { comment = Some(String::from_utf8_lossy(b).into_owned()); } }
-                b"created by"    => { if let Object::Bytes(b) = value { created_by = Some(String::from_utf8_lossy(b).into_owned()); } }
-                b"creation date" => { if let Object::Integer(i) = value { creation_date = i.parse::<i64>().ok(); } }
-                b"announce-list" => { announce_list = Some(parse_announce_list(value)?); }
-                b"info"          => { if let Object::Dict(d) = value { info_raw = Some(encode_dict_raw(d)?); } }
-                _ => { let _ = value; }
-            }
-        }
-
-        let info_bytes = info_raw.ok_or(ProtocolError::MissingField("info"))?;
-        let info = parse_info(&info_bytes)?;
-        Ok(Metainfo { info, announce, announce_list, comment, created_by, creation_date })
+    /// Número total de piezas en todos los archivos.
+    pub fn total_pieces(&self) -> u64 {
+        self.files.iter().map(|f| f.num_pieces as u64).sum()
     }
 }
 
-fn parse_announce_list(obj: Object<'_, '_>) -> Result<Vec<Vec<String>>> {
-    let mut outer = match obj { Object::List(l) => l, _ => return Ok(vec![]) };
-    let mut result = Vec::new();
-    while let Some(tier_obj) = outer.next_object().map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))? {
-        let mut tier_list = match tier_obj { Object::List(l) => l, _ => continue };
-        let mut tier = Vec::new();
-        while let Some(url_obj) = tier_list.next_object().map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))? {
-            if let Object::Bytes(b) = url_obj { tier.push(String::from_utf8_lossy(b).into_owned()); }
-        }
-        result.push(tier);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn piece_length_ranges() {
+        assert_eq!(piece_length_for_size(0),                    4 * 1024);
+        assert_eq!(piece_length_for_size(512 * 1024),           4 * 1024);
+        assert_eq!(piece_length_for_size(1024 * 1024),         16 * 1024);
+        assert_eq!(piece_length_for_size(8 * 1024 * 1024),     64 * 1024);
+        assert_eq!(piece_length_for_size(64 * 1024 * 1024),   256 * 1024);
+        assert_eq!(piece_length_for_size(512 * 1024 * 1024), 1024 * 1024);
+        assert_eq!(piece_length_for_size(4  * 1024 * 1024 * 1024),  4 * 1024 * 1024);
     }
-    Ok(result)
-}
 
-fn encode_object(obj: Object<'_, '_>) -> Result<Vec<u8>> {
-    match obj {
-        Object::Bytes(b) => { let mut o = format!("{}:", b.len()).into_bytes(); o.extend_from_slice(b); Ok(o) }
-        Object::Integer(i) => Ok(format!("i{}e", i).into_bytes()),
-        Object::List(mut list) => {
-            let mut o = vec![b'l'];
-            while let Some(item) = list.next_object().map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))? {
-                o.extend_from_slice(&encode_object(item)?);
-            }
-            o.push(b'e');
-            Ok(o)
-        }
-        Object::Dict(mut dict) => {
-            let mut pairs: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-            while let Some((k, v)) = dict.next_pair().map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))? {
-                pairs.push((k.to_vec(), encode_object(v)?));
-            }
-            pairs.sort_by(|a, b| a.0.cmp(&b.0));
-            let mut o = vec![b'd'];
-            for (k, v) in pairs { o.extend_from_slice(format!("{}:", k.len()).as_bytes()); o.extend_from_slice(&k); o.extend_from_slice(&v); }
-            o.push(b'e');
-            Ok(o)
-        }
-    }
-}
-
-fn encode_dict_raw(mut dict: DictDecoder<'_, '_>) -> Result<Vec<u8>> {
-    let mut pairs: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-    while let Some((k, v)) = dict.next_pair().map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))? {
-        pairs.push((k.to_vec(), encode_object(v)?));
-    }
-    pairs.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut out = vec![b'd'];
-    for (k, v) in pairs { out.extend_from_slice(format!("{}:", k.len()).as_bytes()); out.extend_from_slice(&k); out.extend_from_slice(&v); }
-    out.push(b'e');
-    Ok(out)
-}
-
-fn parse_info(raw: &[u8]) -> Result<Info> {
-    let mut decoder = Decoder::new(raw);
-    let obj = decoder.next_object().map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))?
-        .ok_or_else(|| ProtocolError::BencodeDecodeError("empty info dict".into()))?;
-    let mut dict = match obj { Object::Dict(d) => d, _ => return Err(ProtocolError::BencodeDecodeError("info must be a dict".into())) };
-
-    let mut name = None; let mut piece_length = None; let mut pieces = None;
-    let mut meta_version = None; let mut length = None; let mut files = None;
-
-    while let Some((key, value)) = dict.next_pair().map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))? {
-        match key {
-            b"name"         => { if let Object::Bytes(b) = value { name = Some(String::from_utf8_lossy(b).into_owned()); } }
-            b"piece length" => { if let Object::Integer(i) = value { piece_length = i.parse::<u64>().ok(); } }
-            b"pieces"       => { if let Object::Bytes(b) = value { pieces = Some(b.to_vec()); } }
-            b"meta version" => { if let Object::Integer(i) = value { meta_version = i.parse::<u8>().ok(); } }
-            b"length"       => { if let Object::Integer(i) = value { length = i.parse::<u64>().ok(); } }
-            b"files"        => { files = Some(parse_files(value)?); }
-            _ => { let _ = value; }
+    #[test]
+    fn piece_length_never_exceeds_file_size() {
+        for size in [1u64, 100, 999, 1023] {
+            let pl = piece_length_for_size(size);
+            assert!(pl as u64 <= size, "size={} pl={}", size, pl);
         }
     }
 
-    Ok(Info {
-        name: name.ok_or(ProtocolError::MissingField("info.name"))?,
-        piece_length: piece_length.ok_or(ProtocolError::MissingField("info.piece length"))?,
-        pieces, meta_version, length, files,
-        raw_bytes: raw.to_vec(),
-    })
-}
-
-fn parse_files(obj: Object<'_, '_>) -> Result<Vec<FileInfo>> {
-    let mut list = match obj { Object::List(l) => l, _ => return Err(ProtocolError::BencodeDecodeError("files must be a list".into())) };
-    let mut files = Vec::new();
-    while let Some(item) = list.next_object().map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))? {
-        let mut dict = match item { Object::Dict(d) => d, _ => continue };
-        let mut path = None; let mut file_length = None; let mut pieces_root = None;
-        while let Some((k, v)) = dict.next_pair().map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))? {
-            match k {
-                b"path"        => { path = Some(parse_path_list(v)?); }
-                b"length"      => { if let Object::Integer(i) = v { file_length = i.parse::<u64>().ok(); } }
-                b"pieces root" => { if let Object::Bytes(b) = v { if b.len() == 32 { let mut arr = [0u8; 32]; arr.copy_from_slice(b); pieces_root = Some(arr); } } }
-                _ => { let _ = v; }
-            }
-        }
-        files.push(FileInfo { path: path.unwrap_or_default(), length: file_length.unwrap_or(0), pieces_root });
+    #[test]
+    fn num_pieces_correct() {
+        assert_eq!(num_pieces(0, 4096), 0);
+        assert_eq!(num_pieces(4096, 4096), 1);
+        assert_eq!(num_pieces(4097, 4096), 2);
+        assert_eq!(num_pieces(8192, 4096), 2);
     }
-    Ok(files)
-}
 
-fn parse_path_list(obj: Object<'_, '_>) -> Result<Vec<String>> {
-    let mut list = match obj { Object::List(l) => l, _ => return Ok(vec![]) };
-    let mut parts = Vec::new();
-    while let Some(item) = list.next_object().map_err(|e| ProtocolError::BencodeDecodeError(e.to_string()))? {
-        if let Object::Bytes(b) = item { parts.push(String::from_utf8_lossy(b).into_owned()); }
+    #[test]
+    fn last_piece_length_correct() {
+        let f = FileEntry::new(vec!["a.bin".into()], 5000, Priority::Normal);
+        assert_eq!(f.piece_length, 4096);
+        assert_eq!(f.num_pieces, 2);
+        assert_eq!(f.last_piece_length(), 5000 - 4096);
     }
-    Ok(parts)
+
+    #[test]
+    fn file_exact_multiple_of_piece() {
+        let f = FileEntry::new(vec!["a.bin".into()], 8192, Priority::Normal);
+        assert_eq!(f.last_piece_length(), f.piece_length);
+    }
 }

@@ -8,11 +8,14 @@ pub enum PeerError {
     #[error("protocol error: {0}")]
     Protocol(#[from] qt_protocol::ProtocolError),
 
-    #[error("handshake failed: {0}")]
-    HandshakeFailed(String),
+    #[error("hello rejected: {0}")]
+    HelloRejected(String),
 
     #[error("info hash mismatch")]
     InfoHashMismatch,
+
+    #[error("unexpected message")]
+    UnexpectedMessage,
 
     #[error("peer disconnected")]
     Disconnected,

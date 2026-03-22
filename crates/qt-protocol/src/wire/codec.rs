@@ -3,7 +3,9 @@ use tokio_util::codec::{Decoder, Encoder};
 use crate::error::ProtocolError;
 use super::message::Message;
 
-pub const MAX_FRAME_SIZE: usize = 4 * 1024 * 1024;
+/// Tamaño máximo de frame: 256 MiB + overhead.
+/// El tamaño máximo de pieza es 256 MB, más cabecera de mensaje.
+pub const MAX_FRAME_SIZE: usize = 256 * 1024 * 1024 + 64;
 
 pub struct MessageCodec;
 
@@ -39,7 +41,6 @@ impl Encoder<Message> for MessageCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::message::Message;
     use tokio_util::codec::{Decoder, Encoder};
 
     fn rt(msg: Message) -> Message {
@@ -49,8 +50,8 @@ mod tests {
         codec.decode(&mut buf).unwrap().unwrap()
     }
 
-    #[test] fn have()       { assert_eq!(rt(Message::Have { piece_index: 100 }), Message::Have { piece_index: 100 }); }
-    #[test] fn keep_alive() { assert_eq!(rt(Message::KeepAlive), Message::KeepAlive); }
+    #[test] fn keepalive()  { assert_eq!(rt(Message::KeepAlive), Message::KeepAlive); }
+    #[test] fn have_piece() { assert_eq!(rt(Message::HavePiece { file_index: 0, piece_index: 7 }), Message::HavePiece { file_index: 0, piece_index: 7 }); }
     #[test] fn partial()    { let mut c = MessageCodec; let mut b = BytesMut::from(&b"\x00\x00\x00"[..]); assert!(c.decode(&mut b).unwrap().is_none()); }
     #[test] fn too_large()  { let mut c = MessageCodec; let mut b = BytesMut::new(); b.put_u32((MAX_FRAME_SIZE + 1) as u32); assert!(c.decode(&mut b).is_err()); }
 }

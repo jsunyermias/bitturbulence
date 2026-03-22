@@ -7,6 +7,7 @@ members = [
     "crates/qt-tracker",
     "crates/qt-dht",
     "crates/qt-client",
+    "integration",
 ]
 resolver = "2"
 
@@ -17,12 +18,3 @@ serde = { version = "1", features = ["derive"] }
 bytes = "1"
 thiserror = "1"
 tracing = "0.1"
-
-# Añadidas para qt-transport
-[workspace.dependencies.rcgen]
-version = "0.13"
-
-[workspace.dependencies.rustls]
-version = "0.23"
-default-features = false
-features = ["ring"]

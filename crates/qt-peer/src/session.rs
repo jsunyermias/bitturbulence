@@ -3,7 +3,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
-use qt_protocol::{BlockInfo, Handshake, Message};
+use qt_protocol::{AuthPayload, Message, Priority, PROTOCOL_VERSION};
 use qt_transport::PeerConnection;
 
 use crate::{
@@ -11,74 +11,112 @@ use crate::{
     state::{PendingRequest, SessionState},
 };
 
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-const MSG_TIMEOUT: Duration = Duration::from_secs(120);
+const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+const MSG_TIMEOUT:   Duration = Duration::from_secs(120);
 
 pub trait SessionHandler: Send + 'static {
-    fn on_piece(&mut self, piece_index: u32, begin: u32, data: bytes::Bytes);
-    fn on_have(&mut self, piece_index: u32);
-    fn on_bitfield(&mut self, bitfield: bytes::Bytes);
-    fn on_request(&mut self, piece_index: u32, begin: u32, length: u32) -> Option<bytes::Bytes>;
+    fn on_piece(&mut self, file_index: u16, piece_index: u32, begin: u32, data: bytes::Bytes);
+    fn on_have_piece(&mut self, file_index: u16, piece_index: u32);
+    fn on_have_all(&mut self, file_index: u16);
+    fn on_have_none(&mut self, file_index: u16);
+    fn on_have_bitmap(&mut self, file_index: u16, bitmap: bytes::Bytes);
+    fn on_priority_hint(&mut self, file_index: u16, priority: Priority);
+    fn on_request(&mut self, file_index: u16, piece_index: u32, begin: u32, length: u32) -> Option<bytes::Bytes>;
 }
 
 pub struct PeerSession {
     conn: PeerConnection,
     pub state: SessionState,
-    expected_info_hash: [u8; 20],
-    our_peer_id: [u8; 20],
+    our_peer_id: [u8; 32],
+    our_info_hash: [u8; 32],
+    our_auth: AuthPayload,
 }
 
 impl PeerSession {
     pub fn new(
         conn: PeerConnection,
-        num_pieces: usize,
-        expected_info_hash: [u8; 20],
-        our_peer_id: [u8; 20],
+        num_files: usize,
+        our_peer_id: [u8; 32],
+        our_info_hash: [u8; 32],
+        our_auth: AuthPayload,
     ) -> Self {
         Self {
             conn,
-            state: SessionState::new(num_pieces),
-            expected_info_hash,
+            state: SessionState::new(num_files),
             our_peer_id,
+            our_info_hash,
+            our_auth,
         }
     }
 
-    pub async fn handshake_outbound(&self) -> Result<[u8; 20]> {
-        let (send, recv) = self.conn.inner_conn().open_bi().await
-            .map_err(qt_transport::TransportError::Connection)?;
-        self.do_handshake(send, recv).await
-    }
+    /// Handshake como iniciador: enviamos Hello, esperamos HelloAck.
+    pub async fn hello_outbound(&self) -> Result<[u8; 32]> {
+        let (mut writer, mut reader) = self.conn.open_bidi_stream().await?;
 
-    pub async fn handshake_inbound(&self) -> Result<[u8; 20]> {
-        let (send, recv) = self.conn.inner_conn().accept_bi().await
-            .map_err(qt_transport::TransportError::Connection)?;
-        self.do_handshake(send, recv).await
-    }
+        let hello = Message::Hello {
+            version:   PROTOCOL_VERSION,
+            peer_id:   self.our_peer_id,
+            info_hash: self.our_info_hash,
+            auth:      self.our_auth.clone(),
+        };
 
-    async fn do_handshake(
-        &self,
-        mut send: quinn::SendStream,
-        mut recv: quinn::RecvStream,
-    ) -> Result<[u8; 20]> {
-        let our_hs = Handshake::new(self.expected_info_hash, self.our_peer_id, [0u8; 8]);
-
-        timeout(HANDSHAKE_TIMEOUT, send.write_all(&our_hs.encode()))
+        timeout(HELLO_TIMEOUT, writer.send(hello))
             .await.map_err(|_| PeerError::Timeout)??;
 
-        let mut buf = vec![0u8; Handshake::LEN];
-        timeout(HANDSHAKE_TIMEOUT, recv.read_exact(&mut buf))
-            .await.map_err(|_| PeerError::Timeout)??;
+        let ack = timeout(HELLO_TIMEOUT, reader.next())
+            .await.map_err(|_| PeerError::Timeout)?
+            .ok_or(PeerError::Disconnected)??;
 
-        let their_hs = Handshake::decode(bytes::Bytes::from(buf))?;
-
-        if their_hs.info_hash != self.expected_info_hash {
-            return Err(PeerError::InfoHashMismatch);
+        match ack {
+            Message::HelloAck { peer_id, accepted, reason } => {
+                if !accepted {
+                    return Err(PeerError::HelloRejected(
+                        reason.unwrap_or_else(|| "no reason".into()),
+                    ));
+                }
+                info!(peer = %self.conn.remote_addr(), "hello ok");
+                Ok(peer_id)
+            }
+            _ => Err(PeerError::UnexpectedMessage),
         }
-
-        info!(peer = %self.conn.remote_addr(), peer_id = %hex(&their_hs.peer_id), "handshake ok");
-        Ok(their_hs.peer_id)
     }
 
+    /// Handshake como receptor: esperamos Hello, respondemos HelloAck.
+    pub async fn hello_inbound(&self) -> Result<[u8; 32]> {
+        let (mut writer, mut reader) = self.conn.accept_bidi_stream().await?;
+
+        let msg = timeout(HELLO_TIMEOUT, reader.next())
+            .await.map_err(|_| PeerError::Timeout)?
+            .ok_or(PeerError::Disconnected)??;
+
+        match msg {
+            Message::Hello { version: _, peer_id, info_hash, auth: _ } => {
+                if info_hash != self.our_info_hash {
+                    let ack = Message::HelloAck {
+                        peer_id:  self.our_peer_id,
+                        accepted: false,
+                        reason:   Some("info hash mismatch".into()),
+                    };
+                    let _ = writer.send(ack).await;
+                    return Err(PeerError::InfoHashMismatch);
+                }
+
+                let ack = Message::HelloAck {
+                    peer_id:  self.our_peer_id,
+                    accepted: true,
+                    reason:   None,
+                };
+                timeout(HELLO_TIMEOUT, writer.send(ack))
+                    .await.map_err(|_| PeerError::Timeout)??;
+
+                info!(peer = %self.conn.remote_addr(), "hello accepted");
+                Ok(peer_id)
+            }
+            _ => Err(PeerError::UnexpectedMessage),
+        }
+    }
+
+    /// Loop principal de mensajes.
     pub async fn run<H: SessionHandler>(mut self, mut handler: H) -> Result<()> {
         let (mut writer, mut reader) = self.conn.open_bidi_stream().await?;
 
@@ -93,74 +131,83 @@ impl PeerSession {
             debug!(peer = %self.conn.remote_addr(), ?msg, "received");
 
             match msg {
-                Message::KeepAlive       => {}
-                Message::Choke           => { self.state.apply_choke(); }
-                Message::Unchoke         => { self.state.apply_unchoke(); }
-                Message::Interested      => { self.state.apply_interested(); }
-                Message::NotInterested   => { self.state.apply_not_interested(); }
+                Message::KeepAlive => {}
 
-                Message::Have { piece_index } => {
-                    self.state.apply_have(piece_index);
-                    handler.on_have(piece_index);
+                Message::HaveAll { file_index } => {
+                    self.state.apply_have_all(file_index);
+                    handler.on_have_all(file_index);
                 }
 
-                Message::Bitfield(bits) => {
-                    self.state.apply_bitfield(&bits);
-                    handler.on_bitfield(bits);
+                Message::HaveNone { file_index } => {
+                    self.state.apply_have_none(file_index);
+                    handler.on_have_none(file_index);
                 }
 
-                Message::Request(block) => {
-                    if self.state.local_to_remote.choked {
-                        warn!("ignoring request from choked peer");
-                        continue;
+                Message::HavePiece { file_index, piece_index } => {
+                    self.state.apply_have_piece(file_index, piece_index);
+                    handler.on_have_piece(file_index, piece_index);
+                }
+
+                Message::HaveBitmap { file_index, bitmap } => {
+                    self.state.apply_have_bitmap(file_index, &bitmap);
+                    handler.on_have_bitmap(file_index, bitmap);
+                }
+
+                Message::Request { file_index, piece_index, begin, length } => {
+                    if let Some(data) = handler.on_request(file_index, piece_index, begin, length) {
+                        writer.send(Message::Piece { file_index, piece_index, begin, data }).await?;
+                    } else {
+                        writer.send(Message::Reject { file_index, piece_index, begin, length }).await?;
                     }
-                    if let Some(data) = handler.on_request(block.piece_index, block.begin, block.length) {
-                        writer.send(Message::Piece {
-                            piece_index: block.piece_index,
-                            begin: block.begin,
-                            data,
-                        }).await?;
-                    }
                 }
 
-                Message::Piece { piece_index, begin, data } => {
-                    self.state.remove_pending_request(piece_index, begin);
-                    handler.on_piece(piece_index, begin, data);
+                Message::Piece { file_index, piece_index, begin, data } => {
+                    self.state.remove_pending(file_index, piece_index, begin);
+                    handler.on_piece(file_index, piece_index, begin, data);
                 }
 
-                Message::Cancel(block) => {
-                    self.state.remove_pending_request(block.piece_index, block.begin);
+                Message::Cancel { file_index, piece_index, begin, .. } => {
+                    self.state.remove_pending(file_index, piece_index, begin);
                 }
 
-                Message::HashRequest { .. }
-                | Message::Hashes { .. }
-                | Message::HashReject { .. } => {
-                    debug!("BEP-52 message (not yet handled)");
+                Message::PriorityHint { file_index, priority } => {
+                    handler.on_priority_hint(file_index, priority);
+                }
+
+                Message::Reject { .. } => {
+                    warn!("request rejected by peer");
+                }
+
+                Message::Bye { reason } => {
+                    info!(peer = %self.conn.remote_addr(), %reason, "peer said bye");
+                    return Err(PeerError::Disconnected);
+                }
+
+                Message::HashRequest { .. } | Message::HashResponse { .. } => {
+                    debug!("hash message (not yet handled)");
+                }
+
+                Message::Hello { .. } | Message::HelloAck { .. } => {
+                    warn!("unexpected hello in session loop");
                 }
             }
         }
     }
 
-    pub async fn send_interested(&self) -> Result<()> {
-        self.conn.send_message(Message::Interested).await?;
+    pub async fn send_request(
+        &mut self,
+        file_index: u16,
+        piece_index: u32,
+        begin: u32,
+        length: u32,
+    ) -> Result<()> {
+        self.state.add_pending(PendingRequest { file_index, piece_index, begin, length });
+        self.conn.send_message(Message::Request { file_index, piece_index, begin, length }).await?;
         Ok(())
     }
 
-    pub async fn send_unchoke(&self) -> Result<()> {
-        self.conn.send_message(Message::Unchoke).await?;
+    pub async fn send_bye(&self, reason: &str) -> Result<()> {
+        self.conn.send_message(Message::Bye { reason: reason.into() }).await?;
         Ok(())
     }
-
-    pub async fn request_block(&mut self, piece_index: u32, begin: u32, length: u32) -> Result<()> {
-        if !self.state.can_request() {
-            return Err(PeerError::HandshakeFailed("choked or not interested".into()));
-        }
-        self.state.add_pending_request(PendingRequest { piece_index, begin, length });
-        self.conn.send_message(Message::Request(BlockInfo { piece_index, begin, length })).await?;
-        Ok(())
-    }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }

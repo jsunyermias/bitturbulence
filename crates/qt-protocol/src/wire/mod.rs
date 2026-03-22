@@ -2,4 +2,4 @@ pub mod codec;
 pub mod message;
 
 pub use codec::MessageCodec;
-pub use message::{BlockInfo, Handshake, Message};
+pub use message::{Message, PROTOCOL_VERSION};

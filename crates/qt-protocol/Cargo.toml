@@ -4,12 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bendy = { version = "0.3", default-features = false, features = ["std"] }
-sha1 = "0.10"
-sha2 = "0.10"
-tokio-util = { version = "0.7", features = ["codec"] }
-tokio = { version = "1", features = ["io-util"] }
-bytes = "1"
-thiserror = "1"
-serde = { version = "1", features = ["derive"] }
-tracing = "0.1"
+sha2        = "0.10"
+tokio-util  = { version = "0.7", features = ["codec"] }
+tokio       = { version = "1", features = ["io-util"] }
+bytes       = "1"
+thiserror   = "1"
+serde       = { version = "1", features = ["derive"] }
+tracing     = "0.1"

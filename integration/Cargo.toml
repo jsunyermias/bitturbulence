@@ -1,0 +1,18 @@
+[package]
+name = "qt-integration"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+qt-protocol  = { path = "../crates/qt-protocol" }
+qt-transport = { path = "../crates/qt-transport" }
+qt-peer      = { path = "../crates/qt-peer" }
+qt-pieces    = { path = "../crates/qt-pieces" }
+tokio        = { version = "1", features = ["full"] }
+bytes        = "1"
+sha2         = "0.10"
+tempfile     = "3"
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-util   = { version = "0.7", features = ["codec"] }
+quinn        = "0.11"
