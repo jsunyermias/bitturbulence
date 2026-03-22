@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use hex;
 
 /// Evento de announce.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +39,36 @@ pub struct AnnounceRequest {
 }
 
 fn default_num_want() -> u32 { 50 }
+
+impl AnnounceRequest {
+    /// Constructor ergonómico: acepta hashes en bytes y se encarga de la codificación hex.
+    pub fn new(
+        info_hash:  &[u8; 32],
+        peer_id:    &[u8; 32],
+        addr:       impl Into<String>,
+        event:      AnnounceEvent,
+        uploaded:   u64,
+        downloaded: u64,
+        left:       u64,
+    ) -> Self {
+        Self {
+            info_hash:  hex::encode(info_hash),
+            peer_id:    hex::encode(peer_id),
+            addr:       addr.into(),
+            event,
+            uploaded,
+            downloaded,
+            left,
+            num_want:   50,
+        }
+    }
+
+    /// Sobreescribe el número de peers pedidos (por defecto 50).
+    pub fn with_num_want(mut self, num_want: u32) -> Self {
+        self.num_want = num_want;
+        self
+    }
+}
 
 /// Peer tal como lo devuelve el tracker.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
