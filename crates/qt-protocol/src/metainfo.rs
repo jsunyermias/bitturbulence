@@ -41,16 +41,16 @@ pub fn num_pieces(file_size: u64, piece_length: u32) -> u32 {
 }
 
 /// Descripción de un archivo dentro del torrent.
+///
+/// `piece_length` y `num_pieces` son propiedades computadas, no almacenadas,
+/// porque son deterministas a partir de `size` y `piece_hashes.len()`.
+/// Esto evita inconsistencias en el formato serializado.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileEntry {
     /// Ruta relativa al directorio raíz del torrent.
     pub path: Vec<String>,
     /// Tamaño en bytes.
     pub size: u64,
-    /// Tamaño de pieza calculado automáticamente.
-    pub piece_length: u32,
-    /// Número de piezas.
-    pub num_pieces: u32,
     /// Hashes SHA-256 de cada pieza (32 bytes × num_pieces).
     pub piece_hashes: Vec<[u8; 32]>,
     /// Prioridad inicial de descarga.
@@ -59,31 +59,38 @@ pub struct FileEntry {
 
 impl FileEntry {
     pub fn new(path: Vec<String>, size: u64, priority: Priority) -> Self {
-        let piece_length = piece_length_for_size(size);
-        let n = num_pieces(size, piece_length);
+        let n = num_pieces(size, piece_length_for_size(size)) as usize;
         Self {
             path,
             size,
-            piece_length,
-            num_pieces: n,
-            piece_hashes: vec![[0u8; 32]; n as usize],
+            piece_hashes: vec![[0u8; 32]; n],
             priority,
         }
     }
 
+    /// Tamaño de pieza calculado automáticamente a partir del tamaño del archivo.
+    pub fn piece_length(&self) -> u32 {
+        piece_length_for_size(self.size)
+    }
+
+    /// Número de piezas, derivado de la longitud del vector de hashes.
+    pub fn num_pieces(&self) -> u32 {
+        self.piece_hashes.len() as u32
+    }
+
     /// Longitud real de la última pieza (puede ser menor que piece_length).
     pub fn last_piece_length(&self) -> u32 {
-        if self.num_pieces == 0 { return 0; }
-        let rem = (self.size % self.piece_length as u64) as u32;
-        if rem == 0 { self.piece_length } else { rem }
+        if self.num_pieces() == 0 { return 0; }
+        let rem = (self.size % self.piece_length() as u64) as u32;
+        if rem == 0 { self.piece_length() } else { rem }
     }
 
     /// Longitud de la pieza `index` (la última puede ser más corta).
     pub fn piece_len(&self, index: u32) -> u32 {
-        if index + 1 == self.num_pieces {
+        if index + 1 == self.num_pieces() {
             self.last_piece_length()
         } else {
-            self.piece_length
+            self.piece_length()
         }
     }
 }
@@ -111,7 +118,7 @@ impl Metainfo {
 
     /// Número total de piezas en todos los archivos.
     pub fn total_pieces(&self) -> u64 {
-        self.files.iter().map(|f| f.num_pieces as u64).sum()
+        self.files.iter().map(|f| f.num_pieces() as u64).sum()
     }
 }
 
@@ -149,14 +156,14 @@ mod tests {
     #[test]
     fn last_piece_length_correct() {
         let f = FileEntry::new(vec!["a.bin".into()], 5000, Priority::Normal);
-        assert_eq!(f.piece_length, 4096);
-        assert_eq!(f.num_pieces, 2);
+        assert_eq!(f.piece_length(), 4096);
+        assert_eq!(f.num_pieces(), 2);
         assert_eq!(f.last_piece_length(), 5000 - 4096);
     }
 
     #[test]
     fn file_exact_multiple_of_piece() {
         let f = FileEntry::new(vec!["a.bin".into()], 8192, Priority::Normal);
-        assert_eq!(f.last_piece_length(), f.piece_length);
+        assert_eq!(f.last_piece_length(), f.piece_length());
     }
 }
