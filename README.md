@@ -11,7 +11,7 @@ Implementación experimental del protocolo BitTurbulence: transferencia de archi
 - **9 niveles de prioridad** — por archivo (Minimum → Maximum)
 - **Verificación SHA-256** — integridad garantizada por pieza
 - **DHT Kademlia 256-bit** — descubrimiento de peers sin tracker central
-- **Tracker HTTP propio** — con persistencia SQLite y TTL
+- **Tracker QUIC propio** — announce/scrape sobre QUIC, con persistencia SQLite y TTL
 - **Autenticación configurable** — None, Credentials, Token, mTLS (certificados X.509)
 
 ## Arquitectura

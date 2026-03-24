@@ -65,7 +65,7 @@ Almacenamiento y verificación de piezas en disco.
 - Picker rarest-first para orden de solicitud
 
 ### `qt-tracker`
-Tracker HTTP: announce/scrape con persistencia SQLite y TTL configurable.
+Tracker BitTurbulence sobre QUIC: announce/scrape con persistencia SQLite y TTL configurable. Usa `qt-transport::QuicEndpoint` — no hay HTTP. Cada petición es un stream QUIC bidireccional con framing 4 bytes + JSON.
 
 ### `qt-dht`
 DHT Kademlia 256-bit para descubrimiento de peers sin tracker central.
