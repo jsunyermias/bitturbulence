@@ -6,7 +6,7 @@ Implementación experimental de un protocolo de transferencia de archivos P2P so
 
 - **Transporte QUIC** — TLS 1.3 obligatorio, multiplexación de streams, sin head-of-line blocking
 - **Protocolo wire propio** — mensajes binarios con framing length-prefixed
-- **Piezas adaptativas** — tamaño de pieza calculado automáticamente según el tamaño del archivo (4KB → 256MB, siempre potencia de 2)
+- **Piezas adaptativas** — tamaño de pieza calculado automáticamente según el tamaño del archivo (64 KB → 1 GB, siempre potencia de 2, ~2048 piezas por archivo)
 - **Sin compartición de piezas entre archivos** — cada archivo tiene su propio espacio de piezas independiente
 - **9 niveles de prioridad** — por archivo (Minimum → Maximum)
 - **Verificación SHA-256** — integridad garantizada por pieza
@@ -77,11 +77,11 @@ qt serve
 cargo test --workspace
 ```
 
-88 tests, 0 fallos.
+103 tests, 0 fallos.
 
 ## Estado del proyecto
 
-Experimental. Transferencia P2P real verificada en red local (2.6GB, SHA-256 correcto).
+Experimental. Transferencia P2P real verificada en red local (hasta 3 GB, SHA-256 correcto).
 
 **No listo para producción.** Faltan: descarga paralela, NAT traversal, pipeline de requests, limitación de velocidad.
 
