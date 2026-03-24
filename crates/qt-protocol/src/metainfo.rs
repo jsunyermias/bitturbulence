@@ -1,37 +1,53 @@
 use crate::priority::Priority;
 
-/// Calcula el tamaño de pieza óptimo para un archivo dado su tamaño en bytes.
-/// Siempre potencia de 2. Nunca mayor que el tamaño del archivo.
+/// Tamaño fijo de bloque de transferencia: 16 KiB.
 ///
-/// Tabla de rangos:
-///   <      1 MB  →     4 KB
-///   <      8 MB  →    16 KB
-///   <     64 MB  →    64 KB
-///   <    512 MB  →   256 KB
-///   <      4 GB  →     1 MB
-///   <     32 GB  →     4 MB
-///   <    256 GB  →    16 MB
-///   <    512 GB  →    64 MB
-///   >=   512 GB  →   256 MB
+/// Un bloque es la unidad atómica de Request/Piece en el wire.
+/// Una pieza es un grupo de bloques y es la unidad de verificación SHA-256.
+pub const BLOCK_SIZE: u32 = 16 * 1024;
+
+/// Calcula el tamaño de pieza óptimo para un archivo dado su tamaño en bytes.
+///
+/// El resultado es siempre potencia de 2 y múltiplo de [`BLOCK_SIZE`], acotado
+/// entre 64 KiB (4 bloques) y 1 GiB (65 536 bloques).
+///
+/// Fórmula: `next_pow2(file_size / 2048)`, acotado a [64 KiB, 512 MiB],
+/// con caso especial ≥ 1 TiB → 1 GiB. Produce ~2048 piezas en cada límite.
+///
+/// Tabla de límites:
+///   ≤  128 MB  →   64 KB  (    4 bloques)
+///   ≤  256 MB  →  128 KB  (    8 bloques)
+///   ≤  512 MB  →  256 KB  (   16 bloques)
+///   ≤    1 GB  →  512 KB  (   32 bloques)
+///   ≤    2 GB  →    1 MB  (   64 bloques)
+///   ≤    4 GB  →    2 MB  (  128 bloques)
+///   ≤    8 GB  →    4 MB  (  256 bloques)
+///   ≤   16 GB  →    8 MB  (  512 bloques)
+///   ≤   32 GB  →   16 MB  ( 1024 bloques)
+///   ≤   64 GB  →   32 MB  ( 2048 bloques)
+///   ≤  128 GB  →   64 MB  ( 4096 bloques)
+///   ≤  256 GB  →  128 MB  ( 8192 bloques)
+///   ≤  512 GB  →  256 MB  (16384 bloques)
+///   <    1 TB  →  512 MB  (32768 bloques)
+///   ≥    1 TB  →    1 GB  (65536 bloques)
 pub fn piece_length_for_size(file_size: u64) -> u32 {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * KB;
     const GB: u64 = 1024 * MB;
+    const TB: u64 = 1024 * GB;
 
-    let piece_len = match file_size {
-        s if s <    MB                 => 4  * KB,
-        s if s <    8 * MB             => 16 * KB,
-        s if s <   64 * MB             => 64 * KB,
-        s if s <  512 * MB             => 256 * KB,
-        s if s <    4 * GB             => MB,
-        s if s <   32 * GB             => 4  * MB,
-        s if s <  256 * GB             => 16 * MB,
-        s if s <  512 * GB             => 64 * MB,
-        _                              => 256 * MB,
-    };
-    // No puede ser mayor que el archivo
-    if file_size == 0 { return 4 * KB as u32; }
-    piece_len.min(file_size) as u32
+    const MIN_PIECE: u64 = 64 * KB;  // 4 bloques
+    const MAX_PIECE: u64 = GB;       // 65536 bloques
+
+    if file_size == 0 { return MIN_PIECE as u32; }
+    if file_size >= TB { return MAX_PIECE as u32; }
+
+    // next_pow2(file_size / 2048), acotado a [64 KB, 512 MB].
+    let raw = (file_size / 2048).max(1);
+    let piece = raw.next_power_of_two().clamp(MIN_PIECE, MAX_PIECE / 2);
+
+    // No puede superar el tamaño del archivo.
+    piece.min(file_size) as u32
 }
 
 /// Número de piezas para un archivo dado su tamaño y el tamaño de pieza.
@@ -126,44 +142,87 @@ impl Metainfo {
 mod tests {
     use super::*;
 
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+
+    #[test]
+    fn block_size_is_16k() {
+        assert_eq!(BLOCK_SIZE, 16 * 1024);
+    }
+
     #[test]
     fn piece_length_ranges() {
-        assert_eq!(piece_length_for_size(0),                    4 * 1024);
-        assert_eq!(piece_length_for_size(512 * 1024),           4 * 1024);
-        assert_eq!(piece_length_for_size(1024 * 1024),         16 * 1024);
-        assert_eq!(piece_length_for_size(8 * 1024 * 1024),     64 * 1024);
-        assert_eq!(piece_length_for_size(64 * 1024 * 1024),   256 * 1024);
-        assert_eq!(piece_length_for_size(512 * 1024 * 1024), 1024 * 1024);
-        assert_eq!(piece_length_for_size(4  * 1024 * 1024 * 1024),  4 * 1024 * 1024);
+        // Mínimo: 64 KB (4 bloques de 16 KB)
+        assert_eq!(piece_length_for_size(0),          64 * KB as u32);  // caso especial
+        assert_eq!(piece_length_for_size(KB),          KB as u32);       // < 64 KB → capped al tamaño
+        assert_eq!(piece_length_for_size(64 * KB),    64 * KB as u32);  // ≤ 128 MB → 64 KB
+
+        // ~2048 piezas en cada límite de tramo
+        assert_eq!(piece_length_for_size(128 * MB),   64 * KB as u32);
+        assert_eq!(piece_length_for_size(256 * MB),  128 * KB as u32);
+        assert_eq!(piece_length_for_size(512 * MB),  256 * KB as u32);
+        assert_eq!(piece_length_for_size(GB),         512 * KB as u32);
+        assert_eq!(piece_length_for_size(2   * GB),    1 * MB as u32);
+        assert_eq!(piece_length_for_size(16  * GB),    8 * MB as u32);
+        assert_eq!(piece_length_for_size(128 * GB),   64 * MB as u32);
+        assert_eq!(piece_length_for_size(512 * GB),  256 * MB as u32);
+
+        // Cap: ≥ 1 TB → 1 GB (65536 bloques)
+        assert_eq!(piece_length_for_size(1024 * GB), 1024 * MB as u32);
+    }
+
+    #[test]
+    fn piece_length_always_multiple_of_block_size() {
+        for size in [1u64, KB, 64*KB, MB, 256*MB, GB, 16*GB, 1024*GB] {
+            let pl = piece_length_for_size(size);
+            // Para archivos >= BLOCK_SIZE el resultado debe ser múltiplo de BLOCK_SIZE.
+            if size >= BLOCK_SIZE as u64 {
+                assert_eq!(pl % BLOCK_SIZE, 0, "size={size} pl={pl} no es múltiplo de BLOCK_SIZE");
+            }
+        }
     }
 
     #[test]
     fn piece_length_never_exceeds_file_size() {
-        for size in [1u64, 100, 999, 1023] {
+        for size in [1u64, 100, 999, 16 * KB - 1] {
             let pl = piece_length_for_size(size);
-            assert!(pl as u64 <= size, "size={} pl={}", size, pl);
+            assert!(pl as u64 <= size, "size={size} pl={pl}");
         }
     }
 
     #[test]
     fn num_pieces_correct() {
-        assert_eq!(num_pieces(0, 4096), 0);
-        assert_eq!(num_pieces(4096, 4096), 1);
-        assert_eq!(num_pieces(4097, 4096), 2);
-        assert_eq!(num_pieces(8192, 4096), 2);
+        let pl = 64 * 1024u32; // 64 KB
+        assert_eq!(num_pieces(0, pl), 0);
+        assert_eq!(num_pieces(pl as u64, pl), 1);
+        assert_eq!(num_pieces(pl as u64 + 1, pl), 2);
+        assert_eq!(num_pieces(2 * pl as u64, pl), 2);
     }
 
     #[test]
     fn last_piece_length_correct() {
-        let f = FileEntry::new(vec!["a.bin".into()], 5000, Priority::Normal);
-        assert_eq!(f.piece_length(), 4096);
-        assert_eq!(f.num_pieces(), 2);
-        assert_eq!(f.last_piece_length(), 5000 - 4096);
+        // Archivo de 5 MB (≤ 128 MB): piece_length = 64 KB → 80 piezas exactas
+        let size = 5 * MB as u64;
+        let f = FileEntry::new(vec!["a.bin".into()], size, Priority::Normal);
+        assert_eq!(f.piece_length(), 64 * KB as u32);
+        assert_eq!(f.num_pieces(), 80);
+        assert_eq!(f.last_piece_length(), 64 * KB as u32); // divisible exacto
+    }
+
+    #[test]
+    fn last_piece_shorter_when_not_multiple() {
+        // 5 MB + 1 byte: 81 piezas, la última de 1 byte
+        let size = 5 * MB as u64 + 1;
+        let f = FileEntry::new(vec!["a.bin".into()], size, Priority::Normal);
+        assert_eq!(f.num_pieces(), 81);
+        assert_eq!(f.last_piece_length(), 1);
     }
 
     #[test]
     fn file_exact_multiple_of_piece() {
-        let f = FileEntry::new(vec!["a.bin".into()], 8192, Priority::Normal);
+        let size = 256 * KB as u64; // exactamente 1 pieza
+        let f = FileEntry::new(vec!["a.bin".into()], size, Priority::Normal);
         assert_eq!(f.last_piece_length(), f.piece_length());
     }
 }

@@ -1,11 +1,13 @@
 //! Descargador mínimo: descarga un archivo de un seeder.
 //! Uso: cargo run --bin download -- <ip:puerto> <info_hash_hex> <num_pieces> <piece_length> <output>
 
+use std::io::SeekFrom;
 use std::net::SocketAddr;
 use futures_util::{SinkExt, StreamExt};
 use qt_pieces::hash_piece;
 use qt_protocol::{AuthPayload, Message, MessageCodec, PROTOCOL_VERSION};
 use qt_transport::QuicEndpoint;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
 #[tokio::main]
@@ -72,56 +74,54 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Descargar piezas secuencialmente
-    let mut pieces: Vec<Option<Vec<u8>>> = vec![None; num_pieces];
+    // Abrir archivo de salida para escritura asíncrona pieza a pieza
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true).create(true).truncate(true)
+        .open(output_path).await?;
 
-    for (pi, slot) in pieces.iter_mut().enumerate() {
-        // La última pieza puede ser más corta — pedimos piece_length y luego truncamos
-        let length = piece_length as u32;
+    // Solo acumulamos los hashes (32 bytes × num_pieces, nunca los datos completos)
+    let mut piece_hashes: Vec<u8> = Vec::with_capacity(num_pieces * 32);
+    let mut total_bytes: u64 = 0;
 
+    for pi in 0..num_pieces {
         writer.send(Message::Request {
             file_index:  0,
             piece_index: pi as u32,
             begin:       0,
-            length,
+            length:      piece_length as u32,
         }).await?;
 
-        loop {
+        let data = loop {
             match reader.next().await.unwrap()? {
                 Message::KeepAlive => continue,
                 Message::Piece { piece_index, begin: 0, data, .. } if piece_index == pi as u32 => {
-                    *slot = Some(data.to_vec());
-                    print!("\rpieza {}/{} descargada", pi + 1, num_pieces);
-                    std::io::Write::flush(&mut std::io::stdout())?;
-                    break;
+                    break data;
                 }
                 Message::Reject { piece_index, .. } => {
                     anyhow::bail!("pieza {} rechazada", piece_index);
                 }
                 _ => continue,
             }
-        }
+        };
+
+        // Escribir al offset correcto y liberar los datos de inmediato
+        file.seek(SeekFrom::Start(pi as u64 * piece_length as u64)).await?;
+        file.write_all(&data).await?;
+        total_bytes = pi as u64 * piece_length as u64 + data.len() as u64;
+
+        piece_hashes.extend_from_slice(&hash_piece(&data));
+
+        print!("\rpieza {}/{} descargada", pi + 1, num_pieces);
+        let _ = std::io::Write::flush(&mut std::io::stdout());
     }
 
-    println!("\ntodas las piezas recibidas, ensamblando...");
+    file.flush().await?;
+    drop(file);
+    println!("\nguardado en {}", output_path);
+    println!("tamaño: {} bytes", total_bytes);
 
-    // Ensamblar y escribir
-    let mut output = Vec::new();
-    for p in pieces.into_iter().flatten() {
-        output.extend_from_slice(&p);
-    }
-
-    std::fs::write(output_path, &output)?;
-    println!("guardado en {}", output_path);
-    println!("tamaño: {} bytes", output.len());
-
-    // Verificar integridad
-    let chunks: Vec<&[u8]> = output.chunks(piece_length).collect();
-    let mut all_hashes = Vec::new();
-    for chunk in &chunks {
-        all_hashes.extend_from_slice(&hash_piece(chunk));
-    }
-    let computed_hash = hash_piece(&all_hashes);
+    // Verificar integridad: hash(concat(hashes_piezas)) == info_hash
+    let computed_hash = hash_piece(&piece_hashes);
     if computed_hash == info_hash {
         println!("✅ verificación SHA-256 correcta");
     } else {
