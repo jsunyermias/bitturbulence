@@ -31,7 +31,7 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            bind_addr:         "0.0.0.0:6969".parse().unwrap(),
+            bind_addr:         SocketAddr::from(([0, 0, 0, 0], 6969)),
             require_auth:      false,
             auth_token:        None,
             announce_interval: 1800,

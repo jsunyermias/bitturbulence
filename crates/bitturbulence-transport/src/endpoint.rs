@@ -3,40 +3,41 @@ use quinn::Endpoint;
 use tracing::{info, warn};
 
 use crate::{
-    config::{client_config, server_config},
+    config::{client_config_for_peer, server_config, TofuStore},
     connection::PeerConnection,
     error::{Result, TransportError},
 };
 
 pub struct QuicEndpoint {
-    endpoint: Endpoint,
+    endpoint:   Endpoint,
+    tofu_store: TofuStore,
 }
 
 impl QuicEndpoint {
+    /// Crea un endpoint en modo servidor (escucha conexiones entrantes).
+    /// También puede realizar conexiones salientes vía `connect()`.
     pub fn bind(bind_addr: SocketAddr) -> Result<Self> {
         let server_cfg = server_config()?;
-        let client_cfg = client_config()?;
-
-        let mut endpoint = Endpoint::server(server_cfg, bind_addr)?;
-        endpoint.set_default_client_config(client_cfg);
+        let endpoint = Endpoint::server(server_cfg, bind_addr)?;
 
         info!("QUIC endpoint bound to {}", bind_addr);
-        Ok(Self { endpoint })
+        Ok(Self { endpoint, tofu_store: TofuStore::new() })
     }
 
+    /// Crea un endpoint en modo cliente únicamente (sin servidor).
     pub fn client_only() -> Result<Self> {
-        let client_cfg = client_config()?;
-        let bind_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
+        let bind_addr = SocketAddr::from(([0, 0, 0, 0], 0));
+        let endpoint = Endpoint::client(bind_addr)?;
 
-        let mut endpoint = Endpoint::client(bind_addr)?;
-        endpoint.set_default_client_config(client_cfg);
-
-        Ok(Self { endpoint })
+        Ok(Self { endpoint, tofu_store: TofuStore::new() })
     }
 
+    /// Conecta a un peer. Usa TOFU: la primera conexión almacena el
+    /// fingerprint del cert; las siguientes verifican que coincide.
     pub async fn connect(&self, addr: SocketAddr) -> Result<PeerConnection> {
+        let client_cfg = client_config_for_peer(addr, self.tofu_store.clone())?;
         let conn = self.endpoint
-            .connect(addr, "bitturbulence")?
+            .connect_with(client_cfg, addr, "bitturbulence")?
             .await?;
 
         info!("Connected to peer {}", addr);
@@ -61,6 +62,11 @@ impl QuicEndpoint {
 
     pub fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.endpoint.local_addr()?)
+    }
+
+    /// Devuelve el almacén TOFU para inspección o compartición.
+    pub fn tofu_store(&self) -> &TofuStore {
+        &self.tofu_store
     }
 
     pub async fn shutdown(&self) {

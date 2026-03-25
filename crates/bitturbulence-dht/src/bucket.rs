@@ -40,10 +40,9 @@ impl KBucket {
     /// Añade o actualiza un nodo. Si el bucket está lleno, descarta el
     /// candidato (el nodo más antiguo se mantiene — política Kademlia).
     pub fn upsert(&mut self, node: NodeInfo) -> bool {
-        if let Some(existing) = self.nodes.iter_mut().find(|n| n.id == node.id) {
-            existing.touch();
+        if let Some(idx) = self.nodes.iter().position(|n| n.id == node.id) {
+            self.nodes[idx].touch();
             // Mover al final (más reciente)
-            let idx = self.nodes.iter().position(|n| n.id == node.id).unwrap();
             let n = self.nodes.remove(idx);
             self.nodes.push(n);
             return true;

@@ -22,6 +22,9 @@ pub enum DhtError {
 
     #[error("no nodes available")]
     NoNodes,
+
+    #[error("mutex poisoned (panic en sección crítica)")]
+    LockPoisoned,
 }
 
 pub type Result<T> = std::result::Result<T, DhtError>;

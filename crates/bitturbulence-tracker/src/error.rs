@@ -40,6 +40,9 @@ pub enum TrackerError {
 
     #[error("announce rejected: {0}")]
     Rejected(String),
+
+    #[error("mutex poisoned (panic en sección crítica)")]
+    LockPoisoned,
 }
 
 pub type Result<T> = std::result::Result<T, TrackerError>;

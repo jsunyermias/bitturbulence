@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Esperar HelloAck
     loop {
-        match reader.next().await.unwrap()? {
+        match reader.next().await.ok_or_else(|| anyhow::anyhow!("conexión cerrada esperando HelloAck"))?? {
             Message::KeepAlive => continue,
             Message::HelloAck { accepted, reason, .. } => {
                 if !accepted {
@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Esperar HaveAll
     loop {
-        match reader.next().await.unwrap()? {
+        match reader.next().await.ok_or_else(|| anyhow::anyhow!("conexión cerrada esperando HaveAll"))?? {
             Message::KeepAlive => continue,
             Message::HaveAll { .. } => { println!("filler tiene todo"); break; }
             m => println!("ignorando: {:?}", m),
@@ -92,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
         }).await?;
 
         let data = loop {
-            match reader.next().await.unwrap()? {
+            match reader.next().await.ok_or_else(|| anyhow::anyhow!("conexión cerrada esperando pieza {pi}"))?? {
                 Message::KeepAlive => continue,
                 Message::Piece { piece_index, begin: 0, data, .. } if piece_index == pi as u32 => {
                     break data;

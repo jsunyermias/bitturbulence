@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     bucket::NodeInfo,
-    error::Result,
+    error::{DhtError, Result},
     message::DhtMessage,
     node_id::NodeId,
     store::ValueStore,
@@ -116,7 +116,7 @@ impl DhtNode {
         msg: DhtMessage,
         from_addr: &str,
     ) -> Option<DhtMessage> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().expect("DHT state mutex poisoned");
 
         // Registrar al remitente en la tabla de routing
         state.table.upsert(NodeInfo::new(*msg.sender(), from_addr.to_string()));
@@ -179,7 +179,7 @@ impl DhtNode {
     /// Guarda la tabla de routing en disco.
     pub fn save_routing_table(&self) -> Result<()> {
         if let Some(ref path) = self.config.routing_table_path {
-            let state = self.state.lock().unwrap();
+            let state = self.state.lock().map_err(|_| DhtError::LockPoisoned)?;
             save_table(&state.table, path)?;
             info!("saved routing table to {:?}", path);
         }
@@ -188,18 +188,18 @@ impl DhtNode {
 
     /// Devuelve los K nodos más cercanos a un target.
     pub fn closest_nodes(&self, target: &NodeId) -> Vec<NodeInfo> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().expect("DHT state mutex poisoned");
         state.table.closest(target, K)
     }
 
     /// Añade manualmente un nodo (útil para bootstrap).
     pub fn add_node(&self, id: NodeId, addr: String) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().expect("DHT state mutex poisoned");
         state.table.upsert(NodeInfo::new(id, addr));
     }
 
     pub fn routing_table_size(&self) -> usize {
-        self.state.lock().unwrap().table.len()
+        self.state.lock().expect("DHT state mutex poisoned").table.len()
     }
 
     pub fn config(&self) -> &DhtConfig { &self.config }

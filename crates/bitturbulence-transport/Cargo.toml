@@ -13,4 +13,5 @@ tokio-util  = { version = "0.7", features = ["codec"] }
 futures-util = { version = "0.3", features = ["sink"] }
 rcgen       = "0.13"
 rustls      = { version = "0.23", default-features = false, features = ["ring"] }
+sha2        = "0.10"
 bitturbulence-protocol = { path = "../bitturbulence-protocol" }
