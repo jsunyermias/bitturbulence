@@ -1,0 +1,274 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use anyhow::{anyhow, Context, Result};
+use futures_util::{SinkExt, StreamExt};
+use tokio::sync::mpsc;
+use tokio::time::interval;
+use tracing::{debug, info};
+
+use bitturbulence_pieces::BlockTask;
+use bitturbulence_protocol::Message;
+use bitturbulence_transport::PeerConnection;
+
+use super::context::TorrentCtx;
+use super::stream::{
+    PeerAvail, StreamResult, StreamSlot, W,
+    bitfield_to_bytes, bytes_to_bitfield, download_stream_worker,
+};
+use super::{DEFAULT_STREAMS, MAX_STREAMS, KEEPALIVE_INTERVAL, HELLO_TIMEOUT, PROTOCOL_VERSION};
+
+// ── Helpers del coordinador ───────────────────────────────────────────────────
+
+/// Envía nuestra disponibilidad de todos los archivos al peer.
+pub async fn send_our_bitfields(ctx: &TorrentCtx, ctrl_w: &mut W) -> Result<()> {
+    for fi in 0..ctx.meta.files.len() {
+        let bits = ctx.our_bitfield(fi).await;
+        let msg = if bits.iter().all(|&h| h) {
+            Message::HaveAll  { file_index: fi as u16 }
+        } else if bits.iter().all(|&h| !h) {
+            Message::HaveNone { file_index: fi as u16 }
+        } else {
+            Message::HaveBitmap {
+                file_index: fi as u16,
+                bitmap:     bytes::Bytes::from(bitfield_to_bytes(&bits)),
+            }
+        };
+        ctrl_w.send(msg).await?;
+    }
+    Ok(())
+}
+
+/// Selecciona el siguiente bloque a descargar para un stream existente.
+async fn pick_block(ctx: &TorrentCtx, peer_avail: &[PeerAvail]) -> Option<BlockTask> {
+    for (fi, avail) in peer_avail.iter().enumerate() {
+        let num  = ctx.schedulers[fi].lock().await.num_pieces();
+        let bits = avail.as_bitfield(num);
+        if bits.iter().all(|&h| !h) { continue; }
+        if let Some(task) = ctx.schedulers[fi].lock().await.schedule(&bits) {
+            return Some(task);
+        }
+    }
+    None
+}
+
+/// Selecciona un bloque `Pending` (solo) para decidir si abrir un nuevo stream.
+async fn pick_pending_block(ctx: &TorrentCtx, peer_avail: &[PeerAvail]) -> Option<BlockTask> {
+    for (fi, avail) in peer_avail.iter().enumerate() {
+        let num  = ctx.schedulers[fi].lock().await.num_pieces();
+        let bits = avail.as_bitfield(num);
+        if bits.iter().all(|&h| !h) { continue; }
+        if let Some(task) = ctx.schedulers[fi].lock().await.schedule_pending(&bits) {
+            return Some(task);
+        }
+    }
+    None
+}
+
+// ── Bucle del drainer (conexión saliente) ─────────────────────────────────────
+
+pub async fn run_peer_downloader(
+    conn:    &PeerConnection,
+    ctx:     &Arc<TorrentCtx>,
+    peer_id: &[u8; 32],
+) -> Result<()> {
+    use bitturbulence_protocol::AuthPayload;
+
+    // ── Stream 1: Hello / HelloAck ──────────────────────────────────────
+    let (mut hello_w, mut hello_r) = conn.open_bidi_stream().await?;
+
+    hello_w.send(Message::Hello {
+        version:   PROTOCOL_VERSION,
+        peer_id:   *peer_id,
+        info_hash: ctx.meta.info_hash,
+        auth:      AuthPayload::None,
+    }).await.context("sending hello")?;
+
+    let ack = tokio::time::timeout(HELLO_TIMEOUT, hello_r.next()).await
+        .map_err(|_| anyhow!("hello ack timeout"))?
+        .ok_or_else(|| anyhow!("disconnected during hello"))??;
+
+    match ack {
+        Message::HelloAck { accepted: true, .. } => {}
+        Message::HelloAck { accepted: false, reason, .. } =>
+            return Err(anyhow!("hello rejected: {}", reason.unwrap_or_default())),
+        _ => return Err(anyhow!("expected HelloAck")),
+    }
+    drop(hello_w);
+    drop(hello_r);
+
+    // ── Stream 2: control (Have*, KeepAlive, Bye) ───────────────────────
+    let (mut ctrl_w, mut ctrl_r) = conn.open_bidi_stream().await?;
+    send_our_bitfields(ctx, &mut ctrl_w).await?;
+
+    // ── Streams 3…N: datos por bloque ───────────────────────────────────
+    let num_files = ctx.meta.files.len();
+    let (result_tx, mut result_rx) = mpsc::channel::<StreamResult>(MAX_STREAMS * 8);
+    let mut slots: HashMap<usize, StreamSlot> = HashMap::new();
+    let mut next_id: usize = 0;
+    let mut peer_avail: Vec<PeerAvail> = vec![PeerAvail::Unknown; num_files];
+
+    for _ in 0..DEFAULT_STREAMS {
+        let (w, r) = conn.open_bidi_stream().await?;
+        let (task_tx, task_rx) = mpsc::channel::<BlockTask>(1);
+        tokio::spawn(download_stream_worker(
+            next_id, w, r, task_rx, result_tx.clone(), ctx.clone(),
+        ));
+        slots.insert(next_id, StreamSlot { task_tx, active_block: None });
+        next_id += 1;
+    }
+
+    let mut ka_timer = interval(KEEPALIVE_INTERVAL);
+    ka_timer.tick().await;
+
+    // ── Bucle coordinador ──────────────────────────────────────────────
+    loop {
+        // ─ Asignar bloques a slots idle ────────────────────────────────
+        for slot in slots.values_mut() {
+            if slot.active_block.is_none() {
+                if let Some(task) = pick_block(ctx, &peer_avail).await {
+                    let key = (task.fi, task.pi, task.bi);
+                    let _ = slot.task_tx.send(task).await;
+                    slot.active_block = Some(key);
+                }
+            }
+        }
+
+        // ─ Scale-up: nuevo stream solo para bloques Pending ────────────
+        if slots.len() < MAX_STREAMS {
+            if let Some(task) = pick_pending_block(ctx, &peer_avail).await {
+                match conn.open_bidi_stream().await {
+                    Ok((w, r)) => {
+                        let id = next_id;
+                        next_id += 1;
+                        let (task_tx, task_rx) = mpsc::channel::<BlockTask>(1);
+                        tokio::spawn(download_stream_worker(
+                            id, w, r, task_rx, result_tx.clone(), ctx.clone(),
+                        ));
+                        let key = (task.fi, task.pi, task.bi);
+                        let mut slot = StreamSlot { task_tx, active_block: None };
+                        let _ = slot.task_tx.send(task).await;
+                        slot.active_block = Some(key);
+                        slots.insert(id, slot);
+                        debug!(streams = slots.len(), "scaled up data streams");
+                    }
+                    Err(e) => {
+                        tracing::warn!("open data stream: {e}");
+                        if let Some(task_recov) = pick_pending_block(ctx, &peer_avail).await {
+                            ctx.schedulers[task_recov.fi].lock().await
+                                .mark_block_failed(task_recov.pi, task_recov.bi);
+                        }
+                    }
+                }
+            }
+        }
+
+        // ─ Esperar eventos ─────────────────────────────────────────────
+        tokio::select! {
+            msg_opt = ctrl_r.next() => {
+                let msg = match msg_opt {
+                    Some(Ok(m))  => m,
+                    Some(Err(e)) => return Err(e.into()),
+                    None         => return Ok(()),
+                };
+
+                match msg {
+                    Message::KeepAlive => {}
+
+                    Message::HaveAll { file_index: fi } => {
+                        let fi = fi as usize;
+                        if fi < num_files {
+                            let num = ctx.schedulers[fi].lock().await.num_pieces();
+                            let old = peer_avail[fi].as_bitfield(num);
+                            ctx.schedulers[fi].lock().await.remove_peer_bitfield(&old);
+                            ctx.schedulers[fi].lock().await.add_peer_bitfield(&vec![true; num]);
+                            peer_avail[fi] = PeerAvail::HaveAll;
+                        }
+                    }
+                    Message::HaveNone { file_index: fi } => {
+                        let fi = fi as usize;
+                        if fi < num_files {
+                            let num = ctx.schedulers[fi].lock().await.num_pieces();
+                            let old = peer_avail[fi].as_bitfield(num);
+                            ctx.schedulers[fi].lock().await.remove_peer_bitfield(&old);
+                            peer_avail[fi] = PeerAvail::HaveNone;
+                        }
+                    }
+                    Message::HaveBitmap { file_index: fi, bitmap } => {
+                        let fi = fi as usize;
+                        if fi < num_files {
+                            let num      = ctx.schedulers[fi].lock().await.num_pieces();
+                            let old      = peer_avail[fi].as_bitfield(num);
+                            let new_bits = bytes_to_bitfield(&bitmap, num);
+                            ctx.schedulers[fi].lock().await.remove_peer_bitfield(&old);
+                            ctx.schedulers[fi].lock().await.add_peer_bitfield(&new_bits);
+                            peer_avail[fi] = PeerAvail::Bitmap(new_bits);
+                        }
+                    }
+                    Message::HavePiece { file_index: fi, piece_index: pi } => {
+                        let fi = fi as usize;
+                        if fi < num_files {
+                            ctx.schedulers[fi].lock().await.add_peer_have(pi as usize);
+                            match &mut peer_avail[fi] {
+                                PeerAvail::Bitmap(v) => {
+                                    if (pi as usize) < v.len() { v[pi as usize] = true; }
+                                }
+                                other => {
+                                    let num = ctx.schedulers[fi].lock().await.num_pieces();
+                                    let mut b = other.as_bitfield(num);
+                                    if (pi as usize) < num { b[pi as usize] = true; }
+                                    *other = PeerAvail::Bitmap(b);
+                                }
+                            }
+                        }
+                    }
+                    Message::Bye { reason } => {
+                        info!("peer bye: {reason}");
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+
+            event = result_rx.recv() => {
+                match event {
+                    Some(StreamResult::BlockOk { stream_id, fi, pi, bi, hash }) => {
+                        if let Some(slot) = slots.get_mut(&stream_id) {
+                            slot.active_block = None;
+                        }
+                        let piece_ready = ctx.schedulers[fi].lock().await
+                            .mark_block_done(pi, bi, hash);
+                        if piece_ready {
+                            if ctx.verify_and_complete(fi, pi).await {
+                                let _ = ctrl_w.send(Message::HavePiece {
+                                    file_index: fi as u16, piece_index: pi,
+                                }).await;
+                            }
+                        }
+                    }
+                    Some(StreamResult::BlockFail { stream_id, fi, pi, bi }) => {
+                        if let Some(slot) = slots.get_mut(&stream_id) {
+                            slot.active_block = None;
+                        }
+                        ctx.schedulers[fi].lock().await.mark_block_failed(pi, bi);
+                    }
+                    Some(StreamResult::StreamDead { stream_id }) => {
+                        if let Some(slot) = slots.remove(&stream_id) {
+                            if let Some((fi, pi, bi)) = slot.active_block {
+                                ctx.schedulers[fi].lock().await.mark_block_failed(pi, bi as u32);
+                            }
+                        }
+                        if slots.is_empty() {
+                            return Err(anyhow!("all data streams dead"));
+                        }
+                    }
+                    None => return Ok(()),
+                }
+            }
+
+            _ = ka_timer.tick() => {
+                ctrl_w.send(Message::KeepAlive).await?;
+            }
+        }
+    }
+}
