@@ -151,6 +151,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitturbulence-integration"
+version = "0.1.0"
+dependencies = [
+ "bitturbulence-peer",
+ "bitturbulence-pieces",
+ "bitturbulence-protocol",
+ "bitturbulence-transport",
+ "bytes",
+ "futures-util",
+ "quinn",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "bitturbulence-peer"
 version = "0.1.0"
 dependencies = [
@@ -866,25 +885,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "qt-integration"
-version = "0.1.0"
-dependencies = [
- "bitturbulence-peer",
- "bitturbulence-pieces",
- "bitturbulence-protocol",
- "bitturbulence-transport",
- "bytes",
- "futures-util",
- "quinn",
- "sha2",
- "tempfile",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

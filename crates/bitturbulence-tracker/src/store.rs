@@ -147,7 +147,7 @@ impl PeerStore {
         Ok(result)
     }
 
-    /// Estadísticas de un torrent (seeders, leechers, completados históricos).
+    /// Estadísticas de un torrent (fillers, drainers, completados históricos).
     pub fn scrape(&self, info_hash: &[u8; 32]) -> (u32, u32, u32) {
         let inner = self.inner.lock().unwrap();
         let peers = match inner.get(info_hash) {
@@ -155,15 +155,15 @@ impl PeerStore {
             Some(p) => p,
         };
         let cutoff = now() - PEER_TTL_SECS;
-        let mut seeders   = 0u32;
-        let mut leechers  = 0u32;
+        let mut fillers   = 0u32;
+        let mut drainers  = 0u32;
         let mut completed = 0u32;
         for r in peers.values() {
             if r.last_seen <= cutoff { continue; }
-            if r.is_seeder() { seeders += 1; } else { leechers += 1; }
+            if r.is_filler() { fillers += 1; } else { drainers += 1; }
             if r.completed { completed += 1; }
         }
-        (seeders, leechers, completed)
+        (fillers, drainers, completed)
     }
 
     /// Persiste el estado actual a SQLite.
@@ -246,9 +246,9 @@ mod tests {
         store.announce(&make_req(&"aa".repeat(32), AnnounceEvent::Started, 1000)).unwrap();
         store.announce(&make_req(&"bb".repeat(32), AnnounceEvent::Started, 0)).unwrap();
 
-        let (seeders, leechers, _) = store.scrape(&ih);
-        assert_eq!(seeders,  1);
-        assert_eq!(leechers, 1);
+        let (fillers, drainers, _) = store.scrape(&ih);
+        assert_eq!(fillers,  1);
+        assert_eq!(drainers, 1);
     }
 
     #[test]
@@ -288,7 +288,7 @@ mod tests {
 
         let store2 = PeerStore::open(Some(&db_path)).unwrap();
         let ih = parse_hex32(&"ab".repeat(32)).unwrap();
-        let (_, leechers, _) = store2.scrape(&ih);
-        assert_eq!(leechers, 1);
+        let (_, drainers, _) = store2.scrape(&ih);
+        assert_eq!(drainers, 1);
     }
 }

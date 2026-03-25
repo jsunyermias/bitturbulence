@@ -602,7 +602,7 @@ async fn run_peer_downloader(
 
 // ── Bucle del filler (conexión entrante) ──────────────────────────────────────
 
-async fn run_peer_seeder(
+async fn run_peer_filler(
     conn:      &PeerConnection,
     ctx:       &Arc<TorrentCtx>,
     _peer_id:  &[u8; 32],
@@ -672,7 +672,7 @@ pub async fn run_peer(
     let result = if outbound {
         run_peer_downloader(&conn, &ctx, &peer_id).await
     } else {
-        run_peer_seeder(&conn, &ctx, &peer_id).await
+        run_peer_filler(&conn, &ctx, &peer_id).await
     };
 
     if let Err(e) = result {

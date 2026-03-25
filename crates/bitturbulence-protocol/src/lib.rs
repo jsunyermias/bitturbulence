@@ -1,4 +1,5 @@
-//! # qt-protocol
+//! # bitturbulence-protocol
+
 //!
 //! Tipos base del protocolo BitTurbulence: mensajes wire, metainfo,
 //! info hash SHA-256, prioridades y autenticación.

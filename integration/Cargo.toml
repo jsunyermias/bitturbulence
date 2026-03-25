@@ -1,5 +1,5 @@
 [package]
-name = "qt-integration"
+name = "bitturbulence-integration"
 version = "0.1.0"
 edition = "2021"
 publish = false

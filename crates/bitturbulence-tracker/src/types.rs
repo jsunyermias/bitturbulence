@@ -113,9 +113,9 @@ pub struct AnnounceResponse {
     pub min_interval: Option<u32>,
     /// Lista de peers para este torrent.
     pub peers:      Vec<PeerInfo>,
-    /// Número de seeders (tienen el archivo completo).
+    /// Número de fillers (tienen el archivo completo).
     pub complete:   u32,
-    /// Número de leechers (descargando).
+    /// Número de drainers (descargando).
     pub incomplete: u32,
 }
 
@@ -141,7 +141,7 @@ pub struct PeerRecord {
 }
 
 impl PeerRecord {
-    pub fn is_seeder(&self) -> bool {
+    pub fn is_filler(&self) -> bool {
         self.left == 0 || self.completed
     }
 }

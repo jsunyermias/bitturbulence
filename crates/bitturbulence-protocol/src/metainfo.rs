@@ -144,7 +144,7 @@ impl FileEntry {
     }
 }
 
-/// Metainfo completo del torrent quictorrent.
+/// Metainfo completo de un archivo BitTurbulence.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Metainfo {
     /// Nombre del torrent (directorio raíz para multi-file).

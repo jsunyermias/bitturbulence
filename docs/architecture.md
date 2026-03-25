@@ -1,18 +1,18 @@
-# Arquitectura de quictorrent
+# Arquitectura de bitturbulence
 
 ## Grafo de dependencias entre crates
 
 ```
-qt-protocol <- qt-transport <- qt-peer <- qt-client
-                                  ^             ^
-qt-pieces ────────────────────────┘             |
-qt-tracker ─────────────────────────────────────┤
-qt-dht ─────────────────────────────────────────┘
+bitturbulence-protocol <- bitturbulence-transport <- bitturbulence-peer <- bitturbulence-client
+                                                           ^                        ^
+bitturbulence-pieces ─────────────────────────────────────┘                        |
+bitturbulence-tracker ──────────────────────────────────────────────────────────────┤
+bitturbulence-dht ───────────────────────────────────────────────────────────────────┘
 ```
 
 ## Crates
 
-### `qt-protocol`
+### `bitturbulence-protocol`
 Tipos y lógica del protocolo wire. No depende de red ni de disco.
 
 - **Mensajes wire** — `Hello`, `HelloAck`, `HaveAll`, `HaveBitmap`, `Request`,
@@ -44,39 +44,39 @@ Tipos y lógica del protocolo wire. No depende de red ni de disco.
 - **Prioridades** — 9 niveles (`Minimum` → `Maximum`), codificadas en 1 byte
 - **Autenticación** — `None`, `Credentials` (usuario/contraseña), `Token`, `Certificate` (mTLS X.509)
 
-### `qt-transport`
+### `bitturbulence-transport`
 Capa QUIC sobre [quinn](https://github.com/quinn-rs/quinn). TLS 1.3 obligatorio con certificado self-signed efímero.
 
 - `QuicEndpoint` — abstracción de cliente y servidor QUIC
-- Expone streams bidireccionales tipados que `qt-peer` consume con `MessageCodec`
+- Expone streams bidireccionales tipados que `bitturbulence-peer` consume con `MessageCodec`
 
-### `qt-peer`
+### `bitturbulence-peer`
 Sesión P2P para un único par. Gestiona el handshake y el estado de disponibilidad.
 
 - Handshake: `Hello` → `HelloAck`
 - Disponibilidad: `HaveAll` / `HaveBitmap` / `HaveNone`
 - Descarga: `Request` / `Piece` / `Reject` / `Cancel`
 
-### `qt-pieces`
+### `bitturbulence-pieces`
 Almacenamiento y verificación de piezas en disco.
 
 - Escritura directa al offset correcto (no acumula en RAM)
 - Verificación SHA-256 por pieza al recibirla
 - Picker rarest-first para orden de solicitud
 
-### `qt-tracker`
-Tracker BitTurbulence sobre QUIC: announce/scrape con persistencia SQLite y TTL configurable. Usa `qt-transport::QuicEndpoint` — no hay HTTP. Cada petición es un stream QUIC bidireccional con framing 4 bytes + JSON.
+### `bitturbulence-tracker`
+Tracker BitTurbulence sobre QUIC: announce/scrape con persistencia SQLite y TTL configurable. Usa `bitturbulence-transport::QuicEndpoint` — no hay HTTP. Cada petición es un stream QUIC bidireccional con framing 4 bytes + JSON.
 
-### `qt-dht`
+### `bitturbulence-dht`
 DHT Kademlia 256-bit para descubrimiento de peers sin tracker central.
 
 - Routing table con buckets de 8 nodos
 - Store con TTL y persistencia JSON entre sesiones
 
-### `qt-client`
-Binario CLI `qt` y herramientas de prueba `seed`/`download`.
+### `bitturbulence-client`
+Binario CLI `submarine` y herramientas de prueba `seed`/`download`.
 
-- `seed` — semilla un archivo: calcula metainfo y sirve piezas vía QUIC
+- `seed` — semilla un archivo BitFlow: calcula metainfo y sirve piezas vía QUIC
 - `download` — descarga desde un filler: escribe cada pieza a disco
   en cuanto llega (E/S asíncrona con `tokio::fs`), sin buffering en RAM
 
@@ -92,15 +92,15 @@ El `info_hash` es SHA-256 de la concatenación de los hashes SHA-256 de cada pie
 ## Flujo de descarga
 
 ```
-Downloader                          Filler
+Drainer (descargador)               Filler
     |--- KeepAlive ------------------>|   (materializa stream QUIC)
     |--- Hello(info_hash, peer_id) -->|
     |<-- HelloAck(accepted=true) -----|
-    |<-- HaveAll ----------------------|
+    |<-- HaveAll ---------------------|
     |--- Request(piece=0) ----------->|
-    |<-- Piece(piece=0, data) ---------|
+    |<-- Piece(piece=0, data) --------|
     |--- Request(piece=1) ----------->|
-    |<-- Piece(piece=1, data) ---------|
+    |<-- Piece(piece=1, data) --------|
     |         ...                     |
     |--- Bye ------------------------->|
 ```

@@ -165,7 +165,7 @@ pub fn cmd_peers(id: &str, state_path: &Path) -> Result<()> {
 
 /// Arranca el servidor: tracker HTTP + DHT + endpoint QUIC + motor de descarga.
 pub async fn cmd_serve(config: &Config, state_path: &Path) -> Result<()> {
-    println!("starting quictorrent daemon...");
+    println!("starting bitturbulence daemon...");
 
     // DHT
     let dht_config = DhtConfig {
