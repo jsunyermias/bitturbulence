@@ -42,6 +42,26 @@ pub async fn send_our_bitfields(ctx: &FlowCtx, ctrl_w: &mut W) -> Result<()> {
 /// Umbral de "baja disponibilidad": el archivo lo tiene como máximo este número de peers.
 const LOW_AVAIL: u32 = 1;
 
+/// Bloques pendientes totales por debajo de los cuales se activa el modo endgame.
+/// En endgame se escala a MAX_STREAMS y se permite redundancia (InFlight) en el scale-up.
+const ENDGAME_THRESHOLD: u32 = 16;
+
+/// Número de fallos de bloque consecutivos que clasifican la conexión como inestable.
+/// En modo inestable se comporta igual que endgame (más streams, más redundancia).
+const INSTABILITY_FAIL_THRESHOLD: u32 = 3;
+
+/// Bloques completados con éxito tras los que se resetea el contador de fallos.
+const INSTABILITY_RESET_WINDOW: u32 = 32;
+
+/// Cuenta los bloques `Pending` en todos los archivos del flow.
+async fn total_pending_blocks(ctx: &FlowCtx) -> u32 {
+    let mut n = 0u32;
+    for sched in &ctx.schedulers {
+        n += sched.lock().await.pending_blocks();
+    }
+    n
+}
+
 /// Passes de prioridad inter-archivo: (prioridad requerida, máx. disponibilidad del archivo).
 /// `None` en el segundo campo significa sin filtro de rareza.
 const PRIORITY_PASSES: &[(Priority, Option<u32>)] = &[
@@ -188,6 +208,10 @@ pub async fn run_peer_downloader(
     let mut ka_timer = interval(KEEPALIVE_INTERVAL);
     ka_timer.tick().await;
 
+    // Contadores para detección de inestabilidad.
+    let mut recent_fails: u32 = 0;
+    let mut blocks_ok:    u32 = 0;
+
     // ── Bucle coordinador ──────────────────────────────────────────────
     loop {
         // ─ Asignar bloques a slots idle ────────────────────────────────
@@ -201,9 +225,25 @@ pub async fn run_peer_downloader(
             }
         }
 
-        // ─ Scale-up: nuevo stream solo para bloques Pending ────────────
-        if slots.len() < MAX_STREAMS {
-            if let Some(task) = pick_pending_block(ctx, &peer_avail).await {
+        // ─ Scale-up adaptativo ─────────────────────────────────────────
+        //
+        // Modos de operación (por orden de prioridad):
+        //   Normal   : DEFAULT_STREAMS, solo bloques Pending.
+        //   Endgame  : MAX_STREAMS, también bloques InFlight (redundancia
+        //              hasta TYPICAL_STREAMS_PER_BLOCK / MAX_STREAMS_PER_BLOCK).
+        //   Inestable: igual que endgame (más redundancia para compensar fallos).
+        let unstable   = recent_fails >= INSTABILITY_FAIL_THRESHOLD;
+        let endgame    = total_pending_blocks(ctx).await <= ENDGAME_THRESHOLD;
+        let max_active = if unstable || endgame { MAX_STREAMS } else { DEFAULT_STREAMS };
+
+        if slots.len() < max_active {
+            let task_opt = if unstable || endgame {
+                // Incluye bloques InFlight(< TYPICAL) y InFlight(< MAX) en la selección.
+                pick_block(ctx, &peer_avail).await
+            } else {
+                pick_pending_block(ctx, &peer_avail).await
+            };
+            if let Some(task) = task_opt {
                 match conn.open_bidi_stream().await {
                     Ok((w, r)) => {
                         let id = next_id;
@@ -217,14 +257,16 @@ pub async fn run_peer_downloader(
                         let _ = slot.task_tx.send(task).await;
                         slot.active_block = Some(key);
                         slots.insert(id, slot);
-                        debug!(streams = slots.len(), "scaled up data streams");
+                        debug!(
+                            streams = slots.len(),
+                            endgame, unstable,
+                            "scaled up data streams"
+                        );
                     }
                     Err(e) => {
                         tracing::warn!("open data stream: {e}");
-                        if let Some(task_recov) = pick_pending_block(ctx, &peer_avail).await {
-                            ctx.schedulers[task_recov.fi].lock().await
-                                .mark_block_failed(task_recov.pi, task_recov.bi);
-                        }
+                        ctx.schedulers[task.fi].lock().await
+                            .mark_block_failed(task.pi, task.bi);
                     }
                 }
             }
@@ -312,12 +354,19 @@ pub async fn run_peer_downloader(
                                 }).await;
                             }
                         }
+                        // Ventana deslizante: resetear fallos cada INSTABILITY_RESET_WINDOW bloques.
+                        blocks_ok += 1;
+                        if blocks_ok >= INSTABILITY_RESET_WINDOW {
+                            recent_fails = 0;
+                            blocks_ok    = 0;
+                        }
                     }
                     Some(StreamResult::BlockFail { stream_id, fi, pi, bi }) => {
                         if let Some(slot) = slots.get_mut(&stream_id) {
                             slot.active_block = None;
                         }
                         ctx.schedulers[fi].lock().await.mark_block_failed(pi, bi);
+                        recent_fails += 1;
                     }
                     Some(StreamResult::StreamDead { stream_id }) => {
                         if let Some(slot) = slots.remove(&stream_id) {

@@ -72,6 +72,19 @@ impl BlockScheduler {
 
     // ── Consultas ─────────────────────────────────────────────────────────────
 
+    /// Número total de bloques en estado `Pending` en este archivo.
+    ///
+    /// Usado por el drainer para detectar el modo endgame: cuando la suma de
+    /// bloques pendientes de todos los archivos cae por debajo de un umbral,
+    /// es el momento de aumentar la redundancia de streams.
+    pub fn pending_blocks(&self) -> u32 {
+        (0..self.num_pieces)
+            .filter(|&pi| !self.piece_done[pi] && !self.piece_verifying[pi])
+            .flat_map(|pi| &self.block_state[pi])
+            .filter(|s| **s == BlockState::Pending)
+            .count() as u32
+    }
+
     /// Disponibilidad mínima entre todas las piezas que aún tienen trabajo pendiente.
     ///
     /// Devuelve `u32::MAX` si no hay piezas pendientes (archivo completo o

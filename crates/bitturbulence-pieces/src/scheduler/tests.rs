@@ -179,6 +179,50 @@ mod tests {
     }
 
     #[test]
+    fn pending_blocks_counts_only_pending() {
+        let mut s = sched(2);  // 2 piezas × 4 bloques = 8 bloques totales
+        s.add_peer_bitfield(&[true, true]);
+        let peer = vec![true, true];
+
+        // Estado inicial: todos Pending.
+        assert_eq!(s.pending_blocks(), 8);
+
+        // Dos bloques pasan a InFlight → ya no son Pending.
+        s.schedule(&peer); // pi=0, bi=0 → InFlight(1)
+        s.schedule(&peer); // pi=0, bi=1 → InFlight(1)  (rarest-first, misma pieza)
+        assert_eq!(s.pending_blocks(), 6);
+
+        // Un bloque Done tampoco cuenta.
+        s.mark_block_done(0, 0, [0u8; 32]); // bi=0 → Done
+        assert_eq!(s.pending_blocks(), 6);  // bi=1 InFlight, bi=0 Done: sigue siendo 6
+
+        // Completar toda la pieza 0 y verificarla:
+        // resetear bi=1 a Pending para poder completarlo limpiamente
+        s.mark_block_failed(0, 1);          // bi=1 → Pending
+        for bi in 0u32..4 {
+            if s.block_state[0][bi as usize] == BlockState::Pending {
+                s.schedule(&peer);
+            }
+            s.mark_block_done(0, bi, [0u8; 32]);
+        }
+        assert!(s.piece_verifying[0]);
+        s.mark_piece_verified(0);
+
+        // Solo quedan los 4 bloques Pending de pieza 1.
+        assert_eq!(s.pending_blocks(), 4);
+    }
+
+    #[test]
+    fn pending_blocks_zero_when_complete() {
+        let mut s = sched(1);
+        s.add_peer_bitfield(&[true]);
+        let peer = vec![true];
+        for bi in 0u32..4 { s.schedule(&peer); s.mark_block_done(0, bi, [0u8; 32]); }
+        s.mark_piece_verified(0);
+        assert_eq!(s.pending_blocks(), 0);
+    }
+
+    #[test]
     fn min_availability_returns_min_of_pending_pieces() {
         let mut s = sched(3);
         s.add_peer_bitfield(&[true, true, true]);
