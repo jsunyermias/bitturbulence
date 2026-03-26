@@ -372,6 +372,8 @@ pub async fn run_peer_downloader(
                         if let Some(slot) = slots.remove(&stream_id) {
                             if let Some((fi, pi, bi)) = slot.active_block {
                                 ctx.schedulers[fi].lock().await.mark_block_failed(pi, bi as u32);
+                                // Un stream muerto es inestabilidad, igual que un BlockFail.
+                                recent_fails += 1;
                             }
                         }
                         if slots.is_empty() {
