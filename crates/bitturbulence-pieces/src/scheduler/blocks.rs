@@ -72,6 +72,22 @@ impl BlockScheduler {
 
     // ── Consultas ─────────────────────────────────────────────────────────────
 
+    /// Disponibilidad mínima entre todas las piezas que aún tienen trabajo pendiente.
+    ///
+    /// Devuelve `u32::MAX` si no hay piezas pendientes (archivo completo o
+    /// todas verificando), lo que descarta el archivo de los passes de rareza.
+    pub fn min_availability(&self) -> u32 {
+        (0..self.num_pieces)
+            .filter(|&pi| {
+                !self.piece_done[pi]
+                    && !self.piece_verifying[pi]
+                    && self.block_state[pi].iter().any(|s| *s != BlockState::Done)
+            })
+            .map(|pi| self.availability[pi])
+            .min()
+            .unwrap_or(u32::MAX)
+    }
+
     /// Devuelve `true` si todas las piezas están verificadas.
     pub fn is_complete(&self) -> bool {
         self.piece_done.iter().all(|&d| d)

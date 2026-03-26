@@ -8,7 +8,7 @@ use tracing::info;
 use bitturbulence_protocol::Message;
 use bitturbulence_transport::PeerConnection;
 
-use super::context::TorrentCtx;
+use super::context::FlowCtx;
 use super::drainer::send_our_bitfields;
 use super::stream::serve_data_stream;
 use super::KEEPALIVE_INTERVAL;
@@ -17,7 +17,7 @@ use super::KEEPALIVE_INTERVAL;
 
 pub async fn run_peer_filler(
     conn:     &PeerConnection,
-    ctx:      &Arc<TorrentCtx>,
+    ctx:      &Arc<FlowCtx>,
     _peer_id: &[u8; 32],
 ) -> Result<()> {
     // Stream 1 ya fue gestionado por handle_inbound (Hello / HelloAck).

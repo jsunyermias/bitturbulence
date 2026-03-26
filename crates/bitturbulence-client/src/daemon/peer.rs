@@ -2,14 +2,14 @@ use std::sync::{Arc, atomic::Ordering};
 
 use bitturbulence_transport::PeerConnection;
 
-use super::context::TorrentCtx;
+use super::context::FlowCtx;
 use super::drainer::run_peer_downloader;
 use super::filler::run_peer_filler;
 
 /// Punto de entrada por peer. Despacha a drainer (outbound) o filler (inbound).
 pub async fn run_peer(
     conn:     PeerConnection,
-    ctx:      Arc<TorrentCtx>,
+    ctx:      Arc<FlowCtx>,
     peer_id:  [u8; 32],
     outbound: bool,
 ) {

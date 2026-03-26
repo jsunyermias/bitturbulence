@@ -274,4 +274,213 @@ mod tests {
         let f = FileEntry::new(vec!["a.bin".into()], size, Priority::Normal);
         assert_eq!(f.last_piece_length(), f.piece_length());
     }
+
+    // ── BitFlow de 13 archivos con propiedades variadas ───────────────────────
+
+    /// Los 13 archivos del flujo de prueba, junto con sus propiedades esperadas.
+    ///
+    /// | fi | ruta                            | tamaño          | prioridad |
+    /// |----|---------------------------------|-----------------|-----------|
+    /// |  0 | readme.txt                      | 1 B             | Maximum   |
+    /// |  1 | docs/CHANGELOG.md               | 100 B           | VeryHigh  |
+    /// |  2 | config.toml                     | 512 B           | Higher    |
+    /// |  3 | assets/icon.png                 | 16 KB           | High      |
+    /// |  4 | data/sample.bin                 | 64 KB (1 pieza) | Normal    |
+    /// |  5 | cache/index.bin                 | 64 KB + 1 B     | Low       |
+    /// |  6 | src/bundle.js                   | 1 MB            | Lower     |
+    /// |  7 | dist/app.wasm                   | 5 MB            | VeryLow   |
+    /// |  8 | dist/app.wasm.map               | 5 MB + 999 B    | Minimum   |
+    /// |  9 | video/intro.mp4                 | 128 MB          | Maximum   |
+    /// | 10 | video/main.mp4                  | 256 MB + 1 B    | VeryHigh  |
+    /// | 11 | backup/snapshot.tar             | 1 GB            | Higher    |
+    /// | 12 | media/archive/full.tar.gz       | 2 GB            | High      |
+    fn make_13_file_meta() -> Metainfo {
+        use Priority::*;
+
+        let specs: &[(&[&str], u64, Priority)] = &[
+            (&["readme.txt"],                          1,              Maximum),
+            (&["docs", "CHANGELOG.md"],                100,            VeryHigh),
+            (&["config.toml"],                         512,            Higher),
+            (&["assets", "icon.png"],                  16 * KB,        High),
+            (&["data", "sample.bin"],                  64 * KB,        Normal),
+            (&["cache", "index.bin"],                  64 * KB + 1,    Low),
+            (&["src", "bundle.js"],                    MB,             Lower),
+            (&["dist", "app.wasm"],                    5 * MB,         VeryLow),
+            (&["dist", "app.wasm.map"],                5 * MB + 999,   Minimum),
+            (&["video", "intro.mp4"],                  128 * MB,       Maximum),
+            (&["video", "main.mp4"],                   256 * MB + 1,   VeryHigh),
+            (&["backup", "snapshot.tar"],              GB,             Higher),
+            (&["media", "archive", "full.tar.gz"],     2 * GB,         High),
+        ];
+
+        let files: Vec<FileEntry> = specs.iter().map(|(path, size, prio)| {
+            FileEntry::new(path.iter().map(|s| s.to_string()).collect(), *size, *prio)
+        }).collect();
+
+        let mut meta = Metainfo {
+            name:      "test-multifile-flow".into(),
+            info_hash: [0u8; 32],
+            files,
+            trackers:  vec![
+                "https://tracker.example.com/announce".into(),
+                "udp://tracker2.example.com:6969/announce".into(),
+            ],
+            comment: Some("BitFlow de prueba: 13 archivos con propiedades variadas".into()),
+        };
+        meta.info_hash = meta.compute_info_hash();
+        meta
+    }
+
+    #[test]
+    fn multifile_13_count() {
+        assert_eq!(make_13_file_meta().files.len(), 13);
+    }
+
+    #[test]
+    fn multifile_13_all_nine_priorities_present() {
+        use std::collections::HashSet;
+        let meta = make_13_file_meta();
+        let unique: HashSet<u8> = meta.files.iter().map(|f| f.priority.as_u8()).collect();
+        assert_eq!(unique.len(), 9, "deben estar los 9 niveles de prioridad");
+    }
+
+    #[test]
+    fn multifile_13_priority_per_file() {
+        use Priority::*;
+        let meta = make_13_file_meta();
+        let expected = [
+            Maximum, VeryHigh, Higher, High, Normal,
+            Low, Lower, VeryLow, Minimum,
+            Maximum, VeryHigh, Higher, High,
+        ];
+        for (fi, (&exp, file)) in expected.iter().zip(meta.files.iter()).enumerate() {
+            assert_eq!(file.priority, exp, "fi={fi}");
+        }
+    }
+
+    #[test]
+    fn multifile_13_total_size() {
+        let expected = 1 + 100 + 512
+            + 16 * KB + 64 * KB + (64 * KB + 1)
+            + MB + 5 * MB + (5 * MB + 999)
+            + 128 * MB + (256 * MB + 1) + GB + 2 * GB;
+        assert_eq!(make_13_file_meta().total_size(), expected);
+    }
+
+    #[test]
+    fn multifile_13_piece_lengths() {
+        let meta = make_13_file_meta();
+        // assets/icon.png: 16 KB < 64 KB mínimo → piece_length capado al tamaño
+        assert_eq!(meta.files[3].piece_length(), 16 * KB as u32);
+        // data/sample.bin … video/intro.mp4 (64 KB – 128 MB) → piece_length = 64 KB
+        for fi in 4..=9 {
+            assert_eq!(meta.files[fi].piece_length(), 64 * KB as u32, "fi={fi}");
+        }
+        // video/main.mp4: 256 MB + 1 B → 128 KB
+        assert_eq!(meta.files[10].piece_length(), 128 * KB as u32);
+        // backup/snapshot.tar: 1 GB → 512 KB
+        assert_eq!(meta.files[11].piece_length(), 512 * KB as u32);
+        // media/archive/full.tar.gz: 2 GB → 1 MB
+        assert_eq!(meta.files[12].piece_length(), MB as u32);
+    }
+
+    #[test]
+    fn multifile_13_last_piece_lengths() {
+        let meta = make_13_file_meta();
+        // data/sample.bin: 64 KB exacto → última pieza = piece_length
+        assert_eq!(meta.files[4].last_piece_length(), 64 * KB as u32);
+        // cache/index.bin: 64 KB + 1 B → última pieza de 1 B
+        assert_eq!(meta.files[5].last_piece_length(), 1);
+        // dist/app.wasm.map: 5 MB + 999 B → última pieza de 999 B
+        assert_eq!(meta.files[8].last_piece_length(), 999);
+        // video/main.mp4: 256 MB + 1 B, piece=128 KB → última pieza de 1 B
+        assert_eq!(meta.files[10].last_piece_length(), 1);
+    }
+
+    #[test]
+    fn multifile_13_total_pieces_matches_sum() {
+        let meta = make_13_file_meta();
+        let sum: u64 = meta.files.iter().map(|f| f.num_pieces() as u64).sum();
+        assert_eq!(meta.total_pieces(), sum);
+    }
+
+    #[test]
+    fn multifile_13_num_pieces_per_file() {
+        let meta = make_13_file_meta();
+        // data/sample.bin: 64 KB / 64 KB = 1 pieza
+        assert_eq!(meta.files[4].num_pieces(), 1);
+        // cache/index.bin: ceil((64 KB + 1) / 64 KB) = 2 piezas
+        assert_eq!(meta.files[5].num_pieces(), 2);
+        // dist/app.wasm: ceil(5 MB / 64 KB) = 80 piezas
+        assert_eq!(meta.files[7].num_pieces(), 80);
+        // dist/app.wasm.map: ceil((5 MB + 999) / 64 KB) = 81 piezas
+        assert_eq!(meta.files[8].num_pieces(), 81);
+        // video/main.mp4: ceil((256 MB + 1) / 128 KB) = 2049 piezas
+        assert_eq!(meta.files[10].num_pieces(), 2049);
+    }
+
+    #[test]
+    fn multifile_13_info_hash_deterministic() {
+        let m1 = make_13_file_meta();
+        let m2 = make_13_file_meta();
+        assert_eq!(m1.info_hash, m2.info_hash);
+        assert_ne!(m1.info_hash, [0u8; 32]);
+    }
+
+    #[test]
+    fn multifile_13_info_hash_changes_on_modification() {
+        let mut meta = make_13_file_meta();
+        let original = meta.info_hash;
+        meta.files[4].piece_hashes[0] = [0xFFu8; 32];
+        meta.info_hash = meta.compute_info_hash();
+        assert_ne!(meta.info_hash, original);
+    }
+
+    #[test]
+    fn multifile_13_nested_paths_preserved() {
+        let meta = make_13_file_meta();
+        assert_eq!(meta.files[1].path,  vec!["docs", "CHANGELOG.md"]);
+        assert_eq!(meta.files[10].path, vec!["video", "main.mp4"]);
+        assert_eq!(meta.files[12].path, vec!["media", "archive", "full.tar.gz"]);
+    }
+
+    #[test]
+    fn multifile_13_serialization_roundtrip() {
+        let meta = make_13_file_meta();
+        let json = serde_json::to_string_pretty(&meta).expect("serializar");
+        let restored: Metainfo = serde_json::from_str(&json).expect("deserializar");
+
+        assert_eq!(restored.name,      meta.name);
+        assert_eq!(restored.info_hash, meta.info_hash);
+        assert_eq!(restored.trackers,  meta.trackers);
+        assert_eq!(restored.comment,   meta.comment);
+        assert_eq!(restored.files.len(), meta.files.len());
+
+        for (fi, (orig, rest)) in meta.files.iter().zip(restored.files.iter()).enumerate() {
+            assert_eq!(orig.path,         rest.path,         "path fi={fi}");
+            assert_eq!(orig.size,         rest.size,         "size fi={fi}");
+            assert_eq!(orig.priority,     rest.priority,     "priority fi={fi}");
+            assert_eq!(orig.piece_hashes, rest.piece_hashes, "piece_hashes fi={fi}");
+        }
+    }
+
+    #[test]
+    fn multifile_13_bitflow_file_written() {
+        let meta = make_13_file_meta();
+        let json = serde_json::to_string_pretty(&meta).expect("serializar");
+
+        // Escribir el archivo .bitflow en el directorio de fixtures del crate.
+        let out_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures");
+        std::fs::create_dir_all(&out_path).expect("crear directorio fixtures");
+        let file_path = out_path.join("multifile-13.bitflow");
+        std::fs::write(&file_path, &json).expect("escribir .bitflow");
+
+        // Verificar que el archivo existe y se puede releer.
+        let raw = std::fs::read(&file_path).expect("leer .bitflow");
+        let restored: Metainfo = serde_json::from_slice(&raw).expect("parsear .bitflow");
+        assert_eq!(restored.files.len(), 13);
+        assert_eq!(restored.info_hash, meta.info_hash);
+    }
 }

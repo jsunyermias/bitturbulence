@@ -8,10 +8,10 @@ use tokio::time::interval;
 use tracing::{debug, info};
 
 use bitturbulence_pieces::BlockTask;
-use bitturbulence_protocol::Message;
+use bitturbulence_protocol::{Message, Priority};
 use bitturbulence_transport::PeerConnection;
 
-use super::context::TorrentCtx;
+use super::context::FlowCtx;
 use super::stream::{
     PeerAvail, StreamResult, StreamSlot, W,
     bitfield_to_bytes, bytes_to_bitfield, download_stream_worker,
@@ -21,7 +21,7 @@ use super::{DEFAULT_STREAMS, MAX_STREAMS, KEEPALIVE_INTERVAL, HELLO_TIMEOUT, PRO
 // ── Helpers del coordinador ───────────────────────────────────────────────────
 
 /// Envía nuestra disponibilidad de todos los archivos al peer.
-pub async fn send_our_bitfields(ctx: &TorrentCtx, ctrl_w: &mut W) -> Result<()> {
+pub async fn send_our_bitfields(ctx: &FlowCtx, ctrl_w: &mut W) -> Result<()> {
     for fi in 0..ctx.meta.files.len() {
         let bits = ctx.our_bitfield(fi).await;
         let msg = if bits.iter().all(|&h| h) {
@@ -39,29 +39,96 @@ pub async fn send_our_bitfields(ctx: &TorrentCtx, ctrl_w: &mut W) -> Result<()> 
     Ok(())
 }
 
+/// Umbral de "baja disponibilidad": el archivo lo tiene como máximo este número de peers.
+const LOW_AVAIL: u32 = 1;
+
+/// Passes de prioridad inter-archivo: (prioridad requerida, máx. disponibilidad del archivo).
+/// `None` en el segundo campo significa sin filtro de rareza.
+const PRIORITY_PASSES: &[(Priority, Option<u32>)] = &[
+    (Priority::Maximum, Some(LOW_AVAIL)),   // 1. Máxima + rareza
+    (Priority::VeryHigh, Some(LOW_AVAIL)),  // 2. Muy alta + rareza
+    (Priority::Maximum, None),              // 3. Máxima
+    (Priority::Higher, Some(LOW_AVAIL)),    // 4. Más alta + rareza
+    (Priority::VeryHigh, None),             // 5. Muy alta
+    (Priority::High, Some(LOW_AVAIL)),      // 6. Alta + rareza
+    (Priority::Higher, None),               // 7. Más alta
+    (Priority::High, None),                 // 8. Alta
+];
+
 /// Selecciona el siguiente bloque a descargar para un stream existente.
-async fn pick_block(ctx: &TorrentCtx, peer_avail: &[PeerAvail]) -> Option<BlockTask> {
+///
+/// Orden de selección entre archivos:
+/// 1–8. Bloques `Pending` de archivos con prioridad de usuario alta × rareza.
+///  9.  Bloques `Pending` de archivos con prioridad Normal o inferior.
+/// 10–11. Bloques `InFlight` (redundancia/endgame) de cualquier archivo.
+async fn pick_block(ctx: &FlowCtx, peer_avail: &[PeerAvail]) -> Option<BlockTask> {
+    // Passes 1–8: Pending, priority × rareza del archivo.
+    for &(prio, max_avail) in PRIORITY_PASSES {
+        for (fi, avail) in peer_avail.iter().enumerate() {
+            let mut sched = ctx.schedulers[fi].lock().await;
+            if sched.priority() != prio { continue; }
+            if max_avail.is_some_and(|m| sched.min_availability() > m) { continue; }
+            let bits = avail.as_bitfield(sched.num_pieces());
+            if bits.iter().all(|&h| !h) { continue; }
+            if let Some(task) = sched.schedule_pending(&bits) {
+                return Some(task);
+            }
+        }
+    }
+
+    // Pass 9: Pending de archivos con prioridad Normal o inferior.
     for (fi, avail) in peer_avail.iter().enumerate() {
-        let num  = ctx.schedulers[fi].lock().await.num_pieces();
-        let bits = avail.as_bitfield(num);
+        let mut sched = ctx.schedulers[fi].lock().await;
+        if sched.priority() >= Priority::High { continue; }
+        let bits = avail.as_bitfield(sched.num_pieces());
         if bits.iter().all(|&h| !h) { continue; }
-        if let Some(task) = ctx.schedulers[fi].lock().await.schedule(&bits) {
+        if let Some(task) = sched.schedule_pending(&bits) {
             return Some(task);
         }
     }
+
+    // Passes 10–11: InFlight (redundancia/endgame) de cualquier archivo.
+    // schedule() salta los Pending (ya cubiertos arriba) y devuelve InFlight.
+    for (fi, avail) in peer_avail.iter().enumerate() {
+        let mut sched = ctx.schedulers[fi].lock().await;
+        let bits = avail.as_bitfield(sched.num_pieces());
+        if bits.iter().all(|&h| !h) { continue; }
+        if let Some(task) = sched.schedule(&bits) {
+            return Some(task);
+        }
+    }
+
     None
 }
 
-/// Selecciona un bloque `Pending` (solo) para decidir si abrir un nuevo stream.
-async fn pick_pending_block(ctx: &TorrentCtx, peer_avail: &[PeerAvail]) -> Option<BlockTask> {
+/// Selecciona un bloque `Pending` para decidir si abrir un nuevo stream.
+///
+/// Aplica el mismo orden de prioridad inter-archivo que [`pick_block`],
+/// pero nunca devuelve bloques `InFlight`.
+async fn pick_pending_block(ctx: &FlowCtx, peer_avail: &[PeerAvail]) -> Option<BlockTask> {
+    for &(prio, max_avail) in PRIORITY_PASSES {
+        for (fi, avail) in peer_avail.iter().enumerate() {
+            let mut sched = ctx.schedulers[fi].lock().await;
+            if sched.priority() != prio { continue; }
+            if max_avail.is_some_and(|m| sched.min_availability() > m) { continue; }
+            let bits = avail.as_bitfield(sched.num_pieces());
+            if bits.iter().all(|&h| !h) { continue; }
+            if let Some(task) = sched.schedule_pending(&bits) {
+                return Some(task);
+            }
+        }
+    }
+
     for (fi, avail) in peer_avail.iter().enumerate() {
-        let num  = ctx.schedulers[fi].lock().await.num_pieces();
-        let bits = avail.as_bitfield(num);
+        let mut sched = ctx.schedulers[fi].lock().await;
+        if sched.priority() >= Priority::High { continue; }
+        let bits = avail.as_bitfield(sched.num_pieces());
         if bits.iter().all(|&h| !h) { continue; }
-        if let Some(task) = ctx.schedulers[fi].lock().await.schedule_pending(&bits) {
+        if let Some(task) = sched.schedule_pending(&bits) {
             return Some(task);
         }
     }
+
     None
 }
 
@@ -69,7 +136,7 @@ async fn pick_pending_block(ctx: &TorrentCtx, peer_avail: &[PeerAvail]) -> Optio
 
 pub async fn run_peer_downloader(
     conn:    &PeerConnection,
-    ctx:     &Arc<TorrentCtx>,
+    ctx:     &Arc<FlowCtx>,
     peer_id: &[u8; 32],
 ) -> Result<()> {
     use bitturbulence_protocol::AuthPayload;

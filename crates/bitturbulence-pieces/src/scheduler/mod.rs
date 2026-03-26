@@ -6,11 +6,15 @@
 //! Una **pieza** es un grupo de bloques y es la unidad de verificación SHA-256.
 //!
 //! Cada bloque puede estar siendo descargado por hasta [`types::MAX_STREAMS_PER_BLOCK`]
-//! streams simultáneos. El scheduler prioriza:
+//! streams simultáneos. El scheduler interno prioriza dentro del archivo:
 //!
-//! 1. Bloques `Pending` (nuevos) en piezas rarest-first.
-//! 2. Bloques `InFlight(n < TYPICAL)` — añadir segundo stream para redundancia.
-//! 3. Bloques `InFlight(n < MAX)` — solo cuando no hay nada mejor (endgame).
+//! 1. Bloques `Pending` en piezas rarest-first.
+//! 2. Bloques `InFlight(n < TYPICAL)` — redundancia.
+//! 3. Bloques `InFlight(n < MAX)` — endgame.
+//!
+//! La selección entre archivos (prioridad de usuario × rareza) se aplica en el
+//! coordinador del drainer, que usa [`BlockScheduler::priority`] y
+//! [`BlockScheduler::min_availability`] para decidir de qué archivo descargar.
 //!
 //! ## Módulos
 //!
@@ -29,12 +33,14 @@ mod tests;
 
 pub use types::{BlockState, BlockTask, TYPICAL_STREAMS_PER_BLOCK, MAX_STREAMS_PER_BLOCK};
 
-use bitturbulence_protocol::BLOCK_SIZE;
+use bitturbulence_protocol::{Priority, BLOCK_SIZE};
 
 /// Scheduler de descarga a nivel de bloque para un único archivo.
 ///
 /// Gestiona el estado de cada bloque de cada pieza y expone métodos para
 /// asignar trabajo a streams QUIC respetando los límites de multiplexación.
+/// La prioridad del archivo (respecto al resto de archivos del BitFlow) se
+/// configura con [`set_priority`] y es consultada por el drainer.
 pub struct BlockScheduler {
     pub(super) fi:             usize,
     pub(super) piece_length:   u32,
@@ -55,10 +61,13 @@ pub struct BlockScheduler {
 
     /// Cuántos peers tienen cada pieza (rarest-first).
     pub(super) availability: Vec<u32>,
+
+    /// Prioridad de descarga del archivo completo, asignada por el usuario.
+    priority: Priority,
 }
 
 impl BlockScheduler {
-    /// Crea un scheduler para el archivo `fi`.
+    /// Crea un scheduler para el archivo `fi` con prioridad `Normal`.
     ///
     /// `piece_length` debe ser múltiplo de [`BLOCK_SIZE`].
     /// `last_piece_len` es la longitud real de la última pieza.
@@ -90,6 +99,17 @@ impl BlockScheduler {
             piece_done:      vec![false; num_pieces],
             piece_verifying: vec![false; num_pieces],
             availability:    vec![0u32;  num_pieces],
+            priority:        Priority::Normal,
         }
+    }
+
+    /// Devuelve la prioridad actual del archivo.
+    pub fn priority(&self) -> Priority {
+        self.priority
+    }
+
+    /// Establece la prioridad de descarga del archivo completo.
+    pub fn set_priority(&mut self, priority: Priority) {
+        self.priority = priority;
     }
 }

@@ -90,6 +90,7 @@ struct PeerState {
 }
 
 impl PeerState {
+    #[allow(dead_code)]
     fn num_pieces(&self) -> usize {
         NUM_PIECES
     }

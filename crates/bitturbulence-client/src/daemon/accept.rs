@@ -9,13 +9,13 @@ use tracing::{debug, info, warn};
 use bitturbulence_protocol::Message;
 use bitturbulence_transport::{PeerConnection, QuicEndpoint};
 
-use super::context::TorrentCtx;
+use super::context::FlowCtx;
 use super::peer::run_peer;
 use super::HELLO_TIMEOUT;
 
 pub async fn handle_inbound(
     conn:     PeerConnection,
-    torrents: Arc<HashMap<[u8; 32], Arc<TorrentCtx>>>,
+    torrents: Arc<HashMap<[u8; 32], Arc<FlowCtx>>>,
     peer_id:  [u8; 32],
 ) -> Result<()> {
     // Stream 1: Hello / HelloAck
@@ -54,7 +54,7 @@ pub async fn handle_inbound(
 
 pub async fn accept_loop(
     endpoint: Arc<QuicEndpoint>,
-    torrents: Arc<HashMap<[u8; 32], Arc<TorrentCtx>>>,
+    torrents: Arc<HashMap<[u8; 32], Arc<FlowCtx>>>,
     peer_id:  [u8; 32],
 ) {
     loop {

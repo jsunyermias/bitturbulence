@@ -137,7 +137,7 @@ pub fn cmd_pause(id: &str, state_path: &Path) -> Result<()> {
 pub fn cmd_stop(id: &str, state_path: &Path) -> Result<()> {
     let mut state = ClientState::load(state_path)?;
     let name = state.get(id)
-        .ok_or_else(|| anyhow!("torrent '{}' not found", id))?
+        .ok_or_else(|| anyhow!("flow '{}' not found", id))?
         .name.clone();
 
     state.flows.retain(|k, v| k != id && !v.info_hash.starts_with(id));
@@ -184,7 +184,7 @@ pub async fn cmd_serve(config: &Config, state_path: &Path) -> Result<()> {
     let tracker_config = ServerConfig {
         bind_addr:         format!("0.0.0.0:{}", config.listen_port + 1)
             .parse()
-            .unwrap(),
+            .context("parsing tracker bind addr")?,
         require_auth:      config.tracker_auth_token.is_some(),
         auth_token:        config.tracker_auth_token.clone(),
         announce_interval: 1800,

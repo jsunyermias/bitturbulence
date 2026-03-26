@@ -2,7 +2,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use quinn::{RecvStream, SendStream};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, warn};
 
 use bitturbulence_transport::QuicEndpoint;
@@ -31,7 +30,7 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            bind_addr:         "0.0.0.0:6969".parse().unwrap(),
+            bind_addr:         "0.0.0.0:6969".parse().expect("valid default bind addr"),
             require_auth:      false,
             auth_token:        None,
             announce_interval: 1800,

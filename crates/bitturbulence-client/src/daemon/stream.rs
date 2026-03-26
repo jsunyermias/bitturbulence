@@ -5,21 +5,20 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use bitturbulence_pieces::{BlockScheduler, BlockTask, hash_block};
+use bitturbulence_pieces::{BlockTask, hash_block};
 use bitturbulence_protocol::{Message, MessageCodec};
-use bitturbulence_transport::PeerConnection;
 use quinn::{RecvStream, SendStream};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-use super::context::TorrentCtx;
+use super::context::FlowCtx;
 
-pub type W = FramedWrite<SendStream, MessageCodec>;
-pub type R = FramedRead<RecvStream, MessageCodec>;
+pub(super) type W = FramedWrite<SendStream, MessageCodec>;
+pub(super) type R = FramedRead<RecvStream, MessageCodec>;
 
 // ── Disponibilidad del peer ───────────────────────────────────────────────────
 
 #[derive(Clone)]
-pub enum PeerAvail {
+pub(super) enum PeerAvail {
     Unknown,
     HaveAll,
     HaveNone,
@@ -27,7 +26,7 @@ pub enum PeerAvail {
 }
 
 impl PeerAvail {
-    pub fn as_bitfield(&self, num: usize) -> Vec<bool> {
+    pub(super) fn as_bitfield(&self, num: usize) -> Vec<bool> {
         match self {
             Self::Unknown | Self::HaveNone => vec![false; num],
             Self::HaveAll                  => vec![true;  num],
@@ -42,7 +41,7 @@ impl PeerAvail {
 
 // ── Helpers de bitmap ─────────────────────────────────────────────────────────
 
-pub fn bitfield_to_bytes(bits: &[bool]) -> Vec<u8> {
+pub(super) fn bitfield_to_bytes(bits: &[bool]) -> Vec<u8> {
     let mut bytes = vec![0u8; bits.len().div_ceil(8)];
     for (i, &has) in bits.iter().enumerate() {
         if has { bytes[i / 8] |= 0x80 >> (i % 8); }
@@ -50,7 +49,7 @@ pub fn bitfield_to_bytes(bits: &[bool]) -> Vec<u8> {
     bytes
 }
 
-pub fn bytes_to_bitfield(bytes: &[u8], num: usize) -> Vec<bool> {
+pub(super) fn bytes_to_bitfield(bytes: &[u8], num: usize) -> Vec<bool> {
     (0..num)
         .map(|i| bytes.get(i / 8).is_some_and(|b| (b >> (7 - (i % 8))) & 1 == 1))
         .collect()
@@ -59,7 +58,7 @@ pub fn bytes_to_bitfield(bytes: &[u8], num: usize) -> Vec<bool> {
 // ── Tipos del sistema multi-stream por bloque ─────────────────────────────────
 
 /// Resultado reportado por un stream worker al coordinador.
-pub enum StreamResult {
+pub(super) enum StreamResult {
     /// Bloque descargado y escrito en disco. `hash` = SHA-256(block_data).
     BlockOk   { stream_id: usize, fi: usize, pi: u32, bi: u32, hash: [u8; 32] },
     /// Bloque fallido (Reject del filler o error de red).
@@ -69,23 +68,23 @@ pub enum StreamResult {
 }
 
 /// Slot que representa un stream de datos activo en el coordinador.
-pub struct StreamSlot {
-    pub task_tx:      mpsc::Sender<BlockTask>,
+pub(super) struct StreamSlot {
+    pub(super) task_tx:      mpsc::Sender<BlockTask>,
     /// Bloque actualmente asignado (fi, pi, bi), o None si idle.
-    pub active_block: Option<(usize, u32, u32)>,
+    pub(super) active_block: Option<(usize, u32, u32)>,
 }
 
 // ── Stream worker: descarga un bloque a la vez ────────────────────────────────
 
 /// Descarga repetidamente bloques asignados por el coordinador sobre un
 /// stream QUIC dedicado.
-pub async fn download_stream_worker(
+pub(super) async fn download_stream_worker(
     stream_id: usize,
     mut writer: W,
     mut reader: R,
     mut task_rx: mpsc::Receiver<BlockTask>,
     result_tx:  mpsc::Sender<StreamResult>,
-    ctx:        Arc<TorrentCtx>,
+    ctx:        Arc<FlowCtx>,
 ) {
     while let Some(BlockTask { fi, pi, bi, begin, length }) = task_rx.recv().await {
         if writer.send(Message::Request {
@@ -130,10 +129,10 @@ pub async fn download_stream_worker(
 
 /// Procesa `Request`s del drainer sobre un stream de datos dedicado
 /// y responde con `Piece` o `Reject` bloque a bloque.
-pub async fn serve_data_stream(
+pub(super) async fn serve_data_stream(
     mut writer: W,
     mut reader: R,
-    ctx: Arc<TorrentCtx>,
+    ctx: Arc<FlowCtx>,
 ) {
     while let Some(msg) = reader.next().await {
         match msg {

@@ -9,7 +9,7 @@ use bitturbulence_pieces::{BlockScheduler, TorrentStore, piece_root_from_block_h
 use bitturbulence_protocol::Metainfo;
 
 /// Estado compartido de un BitFlow activo.
-pub struct TorrentCtx {
+pub struct FlowCtx {
     pub meta:       Metainfo,
     pub store:      TorrentStore,
     /// Un BlockScheduler por archivo.
@@ -22,7 +22,7 @@ pub struct TorrentCtx {
     pub peer_count: AtomicUsize,
 }
 
-impl TorrentCtx {
+impl FlowCtx {
     pub async fn new(meta: Metainfo, save_path: &Path, seeding: bool) -> Result<Arc<Self>> {
         let store = TorrentStore::open(save_path, &meta).await
             .context("opening torrent store")?;

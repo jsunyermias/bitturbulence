@@ -8,13 +8,13 @@ use tracing::{info, warn};
 use bitturbulence_tracker::{AnnounceEvent, AnnounceRequest, TrackerClient};
 use bitturbulence_transport::QuicEndpoint;
 
-use super::context::TorrentCtx;
+use super::context::FlowCtx;
 use super::peer::run_peer;
 use super::ANNOUNCE_INTERVAL;
 
 pub async fn tracker_loop(
     tracker_url:  String,
-    ctx:          Arc<TorrentCtx>,
+    ctx:          Arc<FlowCtx>,
     endpoint:     Arc<QuicEndpoint>,
     peer_id:      [u8; 32],
     listen_port:  u16,

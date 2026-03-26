@@ -66,7 +66,7 @@ impl PeerStore {
 
     /// Carga todos los peers activos desde SQLite a memoria.
     fn load_from_db(&self) -> Result<()> {
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         let cutoff = now() - PEER_TTL_SECS;
 
         let mut stmt = db.prepare(
@@ -74,7 +74,7 @@ impl PeerStore {
              FROM peers WHERE last_seen > ?"
         )?;
 
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let rows = stmt.query_map(params![cutoff], |row| {
             let ih: Vec<u8> = row.get(0)?;
             let pid: Vec<u8> = row.get(1)?;
@@ -112,7 +112,7 @@ impl PeerStore {
         let peer_id = parse_hex32(&req.peer_id)
             .map_err(|e| TrackerError::InvalidInfoHash(e.to_string()))?;
 
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let peers = inner.entry(info_hash).or_default();
 
         if req.event == AnnounceEvent::Stopped {
@@ -149,7 +149,7 @@ impl PeerStore {
 
     /// Estadísticas de un torrent (fillers, drainers, completados históricos).
     pub fn scrape(&self, info_hash: &[u8; 32]) -> (u32, u32, u32) {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let peers = match inner.get(info_hash) {
             None => return (0, 0, 0),
             Some(p) => p,
@@ -168,8 +168,8 @@ impl PeerStore {
 
     /// Persiste el estado actual a SQLite.
     pub fn flush(&self) -> Result<()> {
-        let inner = self.inner.lock().unwrap();
-        let db    = self.db.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let db    = self.db.lock().unwrap_or_else(|e| e.into_inner());
 
         let tx = db.unchecked_transaction()?;
         tx.execute("DELETE FROM peers", [])?;

@@ -39,12 +39,12 @@ pub struct BlockTask {
 // ── Helpers de longitud ───────────────────────────────────────────────────────
 
 /// Longitud real de una pieza dado su índice.
-pub fn piece_len(pi: usize, num_pieces: usize, piece_length: u32, last_piece_len: u32) -> u32 {
+pub(super) fn piece_len(pi: usize, num_pieces: usize, piece_length: u32, last_piece_len: u32) -> u32 {
     if pi + 1 == num_pieces { last_piece_len } else { piece_length }
 }
 
 /// Longitud real de un bloque dado su índice dentro de la pieza.
-pub fn block_length(pi: usize, bi: usize, num_pieces: usize, piece_length: u32, last_piece_len: u32) -> u32 {
+pub(super) fn block_length(pi: usize, bi: usize, num_pieces: usize, piece_length: u32, last_piece_len: u32) -> u32 {
     let pl    = piece_len(pi, num_pieces, piece_length, last_piece_len);
     let begin = bi as u32 * BLOCK_SIZE;
     (pl - begin).min(BLOCK_SIZE)

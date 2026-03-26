@@ -12,7 +12,7 @@
 //!
 //! | Módulo          | Responsabilidad                                      |
 //! |-----------------|------------------------------------------------------|
-//! | `context`       | `TorrentCtx` — estado compartido de un BitFlow       |
+//! | `context`       | `FlowCtx` — estado compartido de un BitFlow       |
 //! | `stream`        | Workers QUIC, tipos de stream, helpers de bitmap     |
 //! | `drainer`       | Bucle drainer (conexión saliente)                    |
 //! | `filler`        | Bucle filler (conexión entrante)                     |
@@ -21,18 +21,15 @@
 //! | `tracker`       | Tracker announce loop                                |
 //! | `state_loop`    | Persistencia periódica del estado                    |
 
-pub mod context;
-pub mod stream;
-pub mod drainer;
-pub mod filler;
-pub mod peer;
-pub mod accept;
-pub mod tracker;
-pub mod state_loop;
-
-pub use context::TorrentCtx;
-pub use peer::run_peer;
-
+pub(crate) mod context;
+pub(crate) mod stream;
+pub(crate) mod drainer;
+pub(crate) mod filler;
+pub(crate) mod peer;
+pub(crate) mod accept;
+pub(crate) mod tracker;
+pub(crate) mod state_loop;
+use context::FlowCtx;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -75,8 +72,8 @@ pub async fn run_daemon(config: &Config, state_path: &Path) -> Result<()> {
     let endpoint = Arc::new(QuicEndpoint::bind(bind_addr)?);
 
     let state = ClientState::load(state_path)?;
-    let mut torrents:    HashMap<[u8; 32], Arc<TorrentCtx>> = HashMap::new();
-    let mut flow_ids:    Vec<(String, Arc<TorrentCtx>)>     = Vec::new();
+    let mut torrents:    HashMap<[u8; 32], Arc<FlowCtx>> = HashMap::new();
+    let mut flow_ids:    Vec<(String, Arc<FlowCtx>)>     = Vec::new();
 
     for entry in state.flows.values() {
         let active = matches!(entry.state, DownloadState::Downloading | DownloadState::Seeding);
@@ -97,7 +94,7 @@ pub async fn run_daemon(config: &Config, state_path: &Path) -> Result<()> {
         };
 
         let seeding = entry.state == DownloadState::Seeding;
-        let ctx = match TorrentCtx::new(meta, &entry.save_path, seeding).await {
+        let ctx = match FlowCtx::new(meta, &entry.save_path, seeding).await {
             Ok(c)  => c,
             Err(e) => { warn!("[{}] init ctx: {e}", entry.id); continue; }
         };

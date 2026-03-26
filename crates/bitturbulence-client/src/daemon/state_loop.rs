@@ -4,13 +4,13 @@ use std::sync::atomic::Ordering;
 use tokio::time::interval;
 use tracing::{info, warn};
 
-use super::context::TorrentCtx;
+use super::context::FlowCtx;
 use super::STATE_SAVE_INTERVAL;
 use crate::state::{ClientState, DownloadState};
 
 pub async fn state_save_loop(
     state_path:  std::path::PathBuf,
-    flow_ids:    Vec<(String, Arc<TorrentCtx>)>,
+    flow_ids:    Vec<(String, Arc<FlowCtx>)>,
 ) {
     let mut timer = interval(STATE_SAVE_INTERVAL);
     timer.tick().await;

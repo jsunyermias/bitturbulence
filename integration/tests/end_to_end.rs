@@ -1,6 +1,5 @@
 use std::net::SocketAddr;
 use bytes::Bytes;
-use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 use bitturbulence_pieces::{hash_piece, verify_piece, PieceStore};
@@ -51,12 +50,12 @@ async fn full_download_one_piece() {
         let mut reader = FramedRead::new(recv, MessageCodec);
 
         // Ignorar KeepAlive inicial, esperar Hello
-        let peer_id = loop {
+        loop {
             match reader.next().await.unwrap().unwrap() {
                 Message::KeepAlive => continue,
-                Message::Hello { peer_id, info_hash, .. } => {
+                Message::Hello { info_hash, .. } => {
                     assert_eq!(info_hash, INFO_HASH);
-                    break peer_id;
+                    break;
                 }
                 m => panic!("expected Hello, got {:?}", m),
             }

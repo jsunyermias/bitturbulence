@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use bitturbulence_protocol::BLOCK_SIZE;
+    use bitturbulence_protocol::{BLOCK_SIZE, Priority};
     use crate::scheduler::{BlockScheduler, types::{BlockState, MAX_STREAMS_PER_BLOCK}};
 
     const PL: u32 = 4 * BLOCK_SIZE; // 64 KiB = 4 bloques
@@ -161,5 +161,49 @@ mod tests {
 
         let t = s.schedule(&peer).unwrap();
         assert_eq!(t.pi, 1);
+    }
+
+    // ── Prioridad de archivo (consultada por el drainer) ─────────────────────
+
+    #[test]
+    fn priority_default_is_normal() {
+        let s = sched(1);
+        assert_eq!(s.priority(), Priority::Normal);
+    }
+
+    #[test]
+    fn set_priority_changes_priority() {
+        let mut s = sched(1);
+        s.set_priority(Priority::Maximum);
+        assert_eq!(s.priority(), Priority::Maximum);
+    }
+
+    #[test]
+    fn min_availability_returns_min_of_pending_pieces() {
+        let mut s = sched(3);
+        s.add_peer_bitfield(&[true, true, true]);
+        s.add_peer_bitfield(&[true, false, true]);
+        s.add_peer_bitfield(&[true, false, false]);
+        // avail: [3, 1, 2]
+        assert_eq!(s.min_availability(), 1);
+    }
+
+    #[test]
+    fn min_availability_ignores_done_pieces() {
+        let mut s = sched(2);
+        s.add_peer_bitfield(&[true, true]);
+        s.add_peer_bitfield(&[true, false]);
+        // avail: [2, 1]
+        s.mark_piece_verified(1);
+        // Pieza 1 (avail=1) está done: mínimo ahora es 2.
+        assert_eq!(s.min_availability(), 2);
+    }
+
+    #[test]
+    fn min_availability_returns_max_when_complete() {
+        let mut s = sched(2);
+        s.mark_piece_verified(0);
+        s.mark_piece_verified(1);
+        assert_eq!(s.min_availability(), u32::MAX);
     }
 }

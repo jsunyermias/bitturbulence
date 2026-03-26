@@ -1,17 +1,20 @@
 use bitturbulence_protocol::BLOCK_SIZE;
 
 use super::BlockScheduler;
-use super::types::{BlockState, BlockTask, block_length, piece_len, TYPICAL_STREAMS_PER_BLOCK, MAX_STREAMS_PER_BLOCK};
+use super::types::{BlockState, BlockTask, block_length, TYPICAL_STREAMS_PER_BLOCK, MAX_STREAMS_PER_BLOCK};
 
 impl BlockScheduler {
     /// Selecciona el siguiente bloque a descargar para un stream QUIC.
     ///
     /// `peer_pieces[pi]` indica si el peer tiene la pieza `pi`.
     ///
-    /// Prioridad aplicada:
-    /// 1. Bloque `Pending` en pieza rarest-first que el peer tiene.
+    /// Prioridad interna (dentro del archivo):
+    /// 1. Bloque `Pending` en pieza rarest-first.
     /// 2. Bloque `InFlight(n < TYPICAL)` — añade redundancia hasta el objetivo.
     /// 3. Bloque `InFlight(n < MAX)` — endgame.
+    ///
+    /// La selección entre archivos (prioridad de usuario) se realiza en el
+    /// coordinador del drainer antes de llamar a este método.
     ///
     /// Marca el bloque seleccionado como `InFlight(n+1)` antes de devolver.
     pub fn schedule(&mut self, peer_pieces: &[bool]) -> Option<BlockTask> {
@@ -36,8 +39,8 @@ impl BlockScheduler {
         self.find_block(peer_pieces, |s| *s == BlockState::Pending)
     }
 
-    /// Busca el primer bloque que satisface `predicate` en la pieza más rara
-    /// que el peer tiene, marca el bloque como `InFlight(n+1)` y devuelve la tarea.
+    /// Busca el bloque más raro que satisface `predicate`, lo marca como
+    /// `InFlight(n+1)` y devuelve la tarea.
     fn find_block<F>(&mut self, peer_pieces: &[bool], predicate: F) -> Option<BlockTask>
     where
         F: Fn(&BlockState) -> bool,

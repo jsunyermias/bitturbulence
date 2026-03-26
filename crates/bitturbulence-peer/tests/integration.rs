@@ -1,23 +1,11 @@
 use std::net::SocketAddr;
-use bytes::Bytes;
-use bitturbulence_peer::{PeerSession, SessionHandler};
-use bitturbulence_protocol::{AuthPayload, Priority};
+use bitturbulence_peer::PeerSession;
+use bitturbulence_protocol::AuthPayload;
 use bitturbulence_transport::QuicEndpoint;
 
 const INFO_HASH: [u8; 32] = [0xAB; 32];
 const PEER_ID_A: [u8; 32] = [0x41; 32];
 const PEER_ID_B: [u8; 32] = [0x42; 32];
-
-struct TestHandler;
-impl SessionHandler for TestHandler {
-    fn on_piece(&mut self, _: u16, _: u32, _: u32, _: Bytes) {}
-    fn on_have_piece(&mut self, _: u16, _: u32) {}
-    fn on_have_all(&mut self, _: u16) {}
-    fn on_have_none(&mut self, _: u16) {}
-    fn on_have_bitmap(&mut self, _: u16, _: Bytes) {}
-    fn on_priority_hint(&mut self, _: u16, _: Priority) {}
-    fn on_request(&mut self, _: u16, _: u32, _: u32, _: u32) -> Option<Bytes> { None }
-}
 
 #[tokio::test]
 async fn hello_succeeds() {
