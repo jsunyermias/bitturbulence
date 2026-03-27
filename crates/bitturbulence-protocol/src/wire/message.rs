@@ -18,6 +18,8 @@ const MSG_PIECE:         u8 = 8;
 const MSG_CANCEL:        u8 = 9;
 const MSG_REJECT:        u8 = 10;
 const MSG_PRIORITY_HINT: u8 = 11;
+const MSG_HASH_REQUEST:  u8 = 12;
+const MSG_HASH_RESPONSE: u8 = 13;
 const MSG_BYE:           u8 = 14;
 
 /// Versión actual del protocolo BitTurbulence.
@@ -68,6 +70,16 @@ pub enum Message {
 
     /// Sugerencia de prioridad para un archivo.
     PriorityHint { file_index: u16, priority: Priority },
+
+    /// Solicitar los hashes de bloque de una pieza para verificación incremental.
+    /// El receptor responde con HashResponse. Si no tiene la pieza, responde
+    /// con block_hashes vacío.
+    HashRequest { file_index: u16, piece_index: u32 },
+
+    /// Respuesta con los hashes SHA-256 de cada bloque de una pieza.
+    /// `block_hashes[i] = SHA-256(bloque_i)`. Vacío si el peer no tiene la pieza.
+    /// La raíz Merkle de estos hashes debe coincidir con piece_hashes[pi] del metainfo.
+    HashResponse { file_index: u16, piece_index: u32, block_hashes: Vec<[u8; 32]> },
 
     /// Cierre limpio de la sesión.
     Bye { reason: String },
@@ -155,6 +167,22 @@ impl Message {
                 buf.put_u8(MSG_PRIORITY_HINT);
                 buf.put_u16(*file_index);
                 buf.put_u8(priority.as_u8());
+            }
+
+            Message::HashRequest { file_index, piece_index } => {
+                buf.put_u8(MSG_HASH_REQUEST);
+                buf.put_u16(*file_index);
+                buf.put_u32(*piece_index);
+            }
+
+            Message::HashResponse { file_index, piece_index, block_hashes } => {
+                buf.put_u8(MSG_HASH_RESPONSE);
+                buf.put_u16(*file_index);
+                buf.put_u32(*piece_index);
+                buf.put_u32(block_hashes.len() as u32);
+                for h in block_hashes {
+                    buf.put_slice(h.as_slice());
+                }
             }
 
             Message::Bye { reason } => {
@@ -260,6 +288,27 @@ impl Message {
                 Ok(Message::PriorityHint { file_index, priority })
             }
 
+            MSG_HASH_REQUEST => {
+                chk(&buf, 6, "HashRequest")?;
+                Ok(Message::HashRequest {
+                    file_index:  buf.get_u16(),
+                    piece_index: buf.get_u32(),
+                })
+            }
+
+            MSG_HASH_RESPONSE => {
+                chk(&buf, 10, "HashResponse")?;
+                let file_index  = buf.get_u16();
+                let piece_index = buf.get_u32();
+                let count       = buf.get_u32() as usize;
+                chk(&buf, count * 32, "HashResponse.hashes")?;
+                let mut block_hashes = Vec::with_capacity(count);
+                for _ in 0..count {
+                    block_hashes.push(r32(&mut buf));
+                }
+                Ok(Message::HashResponse { file_index, piece_index, block_hashes })
+            }
+
             MSG_BYE => {
                 chk(&buf, 2, "Bye")?;
                 let len = buf.get_u16() as usize;
@@ -329,6 +378,28 @@ mod tests {
             peer_id:  [0x02; 32],
             accepted: false,
             reason:   Some("invalid credentials".into()),
+        });
+    }
+
+    #[test]
+    fn hash_request() {
+        rt(Message::HashRequest { file_index: 2, piece_index: 77 });
+    }
+
+    #[test]
+    fn hash_response_empty() {
+        rt(Message::HashResponse { file_index: 0, piece_index: 1, block_hashes: vec![] });
+    }
+
+    #[test]
+    fn hash_response_multiple_hashes() {
+        let h0 = [0x11u8; 32];
+        let h1 = [0x22u8; 32];
+        let h2 = [0x33u8; 32];
+        rt(Message::HashResponse {
+            file_index: 1,
+            piece_index: 42,
+            block_hashes: vec![h0, h1, h2],
         });
     }
 

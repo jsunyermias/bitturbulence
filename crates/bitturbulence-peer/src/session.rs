@@ -186,6 +186,10 @@ impl PeerSession {
                 Message::Hello { .. } | Message::HelloAck { .. } => {
                     warn!("unexpected hello in session loop");
                 }
+
+                Message::HashRequest { .. } | Message::HashResponse { .. } => {
+                    // Gestionados directamente en los data streams; ignorar aquí.
+                }
             }
         }
     }
