@@ -20,7 +20,7 @@ El objetivo es que funcione sobre QUIC, que la asignación del tamaño de pieza 
 ```
 ┌──────────────────────────────────────────────────────┐
 │              bitturbulence-client (submarine)         │
-│      CLI: submarine torrent add/start/...            │
+│      CLI: submarine flow add/start/...               │
 └──────┬──────────┬──────────┬───────────────────────┘
        │          │          │
   bitturbulence-peer  bitturbulence-tracker  bitturbulence-dht
@@ -68,8 +68,8 @@ cargo build --release
   /path/to/output.mkv
 
 # CLI completo
-submarine torrent add file.bitflow
-submarine torrent start <id>
+submarine flow add file.bitflow
+submarine flow start <id>
 submarine status
 submarine serve
 ```
@@ -79,13 +79,13 @@ submarine serve
 cargo test --workspace
 ```
 
-108 tests, 0 fallos.
+181 tests, 0 fallos.
 
 ## Estado del proyecto
 
 Experimental. Transferencia P2P real verificada en red local (hasta 3 GB, SHA-256 correcto). Descarga paralela implementada y verificada con current de 8 peers.
 
-**No listo para producción.** Faltan: NAT traversal, limitación de velocidad, reanudación de descargas.
+**No listo para producción.** Faltan: NAT traversal, limitación de velocidad.
 
 ## Licencia
 
