@@ -68,6 +68,8 @@ impl PeerStore {
 
     /// Carga todos los peers activos desde SQLite a memoria.
     fn load_from_db(&self) -> Result<()> {
+        // Orden de adquisición: siempre inner primero, luego db (igual que flush).
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         let cutoff = now() - PEER_TTL_SECS;
 
@@ -75,8 +77,6 @@ impl PeerStore {
             "SELECT info_hash, peer_id, addr, uploaded, downloaded, left_bytes, last_seen, completed
              FROM peers WHERE last_seen > ?"
         )?;
-
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let rows = stmt.query_map(params![cutoff], |row| {
             let ih: Vec<u8> = row.get(0)?;
             let pid: Vec<u8> = row.get(1)?;
@@ -127,37 +127,46 @@ impl PeerStore {
             parse_hex32(&req.peer_id).map_err(|e| TrackerError::InvalidInfoHash(e.to_string()))?;
 
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let peers = inner.entry(info_hash).or_default();
 
-        if req.event == AnnounceEvent::Stopped {
-            peers.remove(&peer_id);
-            debug!("peer removed: {}", &req.peer_id[..8]);
-        } else {
-            let record = PeerRecord {
-                info_hash,
-                peer_id,
-                addr: req.addr.clone(),
-                uploaded: req.uploaded,
-                downloaded: req.downloaded,
-                left: req.left,
-                last_seen: now(),
-                completed: req.event == AnnounceEvent::Completed || req.left == 0,
-            };
-            peers.insert(peer_id, record);
-            debug!("peer upserted: {}", &req.peer_id[..8]);
+        {
+            let peers = inner.entry(info_hash).or_default();
+            if req.event == AnnounceEvent::Stopped {
+                peers.remove(&peer_id);
+                debug!("peer removed: {}", &req.peer_id[..8]);
+            } else {
+                let record = PeerRecord {
+                    info_hash,
+                    peer_id,
+                    addr: req.addr.clone(),
+                    uploaded: req.uploaded,
+                    downloaded: req.downloaded,
+                    left: req.left,
+                    last_seen: now(),
+                    completed: req.event == AnnounceEvent::Completed || req.left == 0,
+                };
+                peers.insert(peer_id, record);
+                debug!("peer upserted: {}", &req.peer_id[..8]);
+            }
+
+            // Purgar peers expirados.
+            let cutoff = now() - PEER_TTL_SECS;
+            peers.retain(|_, r| r.last_seen > cutoff);
         }
-
-        // Purgar peers expirados
-        let cutoff = now() - PEER_TTL_SECS;
-        peers.retain(|_, r| r.last_seen > cutoff);
+        // Limpiar entradas vacías: torrents abandonados no acumulan memoria.
+        inner.retain(|_, peers| !peers.is_empty());
 
         // Devolver hasta num_want peers (excluyendo al solicitante)
-        let result: Vec<PeerRecord> = peers
-            .values()
-            .filter(|r| r.peer_id != peer_id)
-            .take(req.num_want as usize)
-            .cloned()
-            .collect();
+        let result: Vec<PeerRecord> = inner
+            .get(&info_hash)
+            .map(|peers| {
+                peers
+                    .values()
+                    .filter(|r| r.peer_id != peer_id)
+                    .take(req.num_want as usize)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Ok(result)
     }
@@ -190,29 +199,38 @@ impl PeerStore {
     }
 
     /// Persiste el estado actual a SQLite.
+    ///
+    /// El lock de `inner` se libera antes de escribir a disco para no bloquear
+    /// announce/scrape durante la escritura.
     pub fn flush(&self) -> Result<()> {
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        // Orden de adquisición: inner primero (coherente con el resto).
+        // Clonar los registros para liberar el lock antes de tocar SQLite.
+        let snapshot: Vec<PeerRecord> = {
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            inner.values().flat_map(|peers| peers.values().cloned()).collect()
+        };
+        let num_torrents = {
+            let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            inner.len()
+        };
 
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         let tx = db.unchecked_transaction()?;
         tx.execute("DELETE FROM peers", [])?;
-
-        for peers in inner.values() {
-            for r in peers.values() {
-                tx.execute(
-                    "INSERT OR REPLACE INTO peers
-                     (info_hash, peer_id, addr, uploaded, downloaded, left_bytes, last_seen, completed)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-                    params![
-                        r.info_hash.as_slice(), r.peer_id.as_slice(),
-                        r.addr, r.uploaded, r.downloaded, r.left,
-                        r.last_seen, r.completed as i32,
-                    ],
-                )?;
-            }
+        for r in &snapshot {
+            tx.execute(
+                "INSERT OR REPLACE INTO peers
+                 (info_hash, peer_id, addr, uploaded, downloaded, left_bytes, last_seen, completed)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                params![
+                    r.info_hash.as_slice(), r.peer_id.as_slice(),
+                    r.addr, r.uploaded, r.downloaded, r.left,
+                    r.last_seen, r.completed as i32,
+                ],
+            )?;
         }
         tx.commit()?;
-        debug!("flushed {} torrents to db", inner.len());
+        debug!("flushed {} torrents to db", num_torrents);
         Ok(())
     }
 

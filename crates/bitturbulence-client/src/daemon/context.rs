@@ -130,13 +130,21 @@ impl FlowCtx {
                 return false;
             }
         };
-        let expected = &self.meta.files[fi].piece_hashes[pi as usize];
+        let Some(&expected) = self.meta.files[fi].piece_hashes.get(pi as usize) else {
+            warn!(fi, pi, "piece_index fuera de rango en piece_hashes");
+            self.sched.mark_piece_hash_failed(fi, pi).await;
+            return false;
+        };
         let computed = piece_root_from_block_hashes(&block_hashes);
         let piece_bytes = self.meta.files[fi].piece_len(pi) as u64;
-        if &computed == expected {
+        if computed == expected {
             let have_snapshot = {
                 let mut have = self.have.lock().await;
-                have[fi][pi as usize] = true;
+                let Some(row) = have.get_mut(fi).and_then(|r| r.get_mut(pi as usize)) else {
+                    warn!(fi, pi, "have[fi][pi] fuera de rango");
+                    return false;
+                };
+                *row = true;
                 have.clone()
             };
             let _ = self.have_piece_tx.send((fi, pi));

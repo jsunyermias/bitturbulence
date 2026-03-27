@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
+use tokio::time::timeout;
 use tracing::{debug, warn};
 
 use bitturbulence_pieces::{hash_block, piece_root_from_block_hashes, BlockTask};
@@ -12,6 +13,7 @@ use quinn::{RecvStream, SendStream};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
 use super::context::FlowCtx;
+use super::HASH_RESPONSE_TIMEOUT;
 
 pub(super) type W = FramedWrite<SendStream, MessageCodec>;
 pub(super) type R = FramedRead<RecvStream, MessageCodec>;
@@ -148,42 +150,58 @@ pub(super) async fn download_stream_worker(
                 return;
             }
 
-            // Esperar HashResponse (ignorar mensajes de otras piezas).
-            curr_block_hashes = loop {
-                match reader.next().await {
-                    Some(Ok(Message::HashResponse {
-                        file_index,
-                        piece_index,
-                        block_hashes,
-                    })) if file_index as usize == fi && piece_index == pi => {
-                        if !block_hashes.is_empty() {
-                            let computed = piece_root_from_block_hashes(&block_hashes);
-                            let Some(&expected) = ctx.meta.files[fi].piece_hashes.get(pi as usize)
-                            else {
-                                warn!(fi, pi, "piece_index fuera de rango en metainfo");
-                                break vec![];
-                            };
-                            if computed != expected {
-                                warn!(
-                                    fi,
-                                    pi,
-                                    "HashResponse: raíz Merkle incorrecta \
-                                              — filler puede estar sirviendo datos corruptos"
-                                );
-                                // Sin hashes verificados: caerá en verificación de pieza al final.
-                                break vec![];
+            // Esperar HashResponse con timeout para evitar que el stream
+            // worker quede bloqueado indefinidamente ante un filler lento o buggy.
+            // Devuelve Some(hashes) en éxito/mismatch, None si el stream murió.
+            let hash_result = timeout(HASH_RESPONSE_TIMEOUT, async {
+                loop {
+                    match reader.next().await {
+                        Some(Ok(Message::HashResponse {
+                            file_index,
+                            piece_index,
+                            block_hashes,
+                        })) if file_index as usize == fi && piece_index == pi => {
+                            if !block_hashes.is_empty() {
+                                let computed = piece_root_from_block_hashes(&block_hashes);
+                                let Some(&expected) =
+                                    ctx.meta.files[fi].piece_hashes.get(pi as usize)
+                                else {
+                                    warn!(fi, pi, "piece_index fuera de rango en metainfo");
+                                    return Some(vec![]);
+                                };
+                                if computed != expected {
+                                    warn!(
+                                        fi,
+                                        pi,
+                                        "HashResponse: raíz Merkle incorrecta \
+                                                  — filler puede estar sirviendo datos corruptos"
+                                    );
+                                    return Some(vec![]);
+                                }
                             }
+                            return Some(block_hashes);
                         }
-                        break block_hashes;
+                        Some(Ok(Message::HashResponse { .. })) => {} // otra pieza, ignorar
+                        None | Some(Err(_)) => return None, // stream muerto
+                        Some(Ok(_)) => {}
                     }
-                    Some(Ok(Message::HashResponse { .. })) => {} // otra pieza, ignorar
-                    None | Some(Err(_)) => {
-                        let _ = result_tx.send(StreamResult::StreamDead { stream_id }).await;
-                        return;
-                    }
-                    Some(Ok(_)) => {}
                 }
-            };
+            })
+            .await;
+
+            match hash_result {
+                Ok(Some(hashes)) => curr_block_hashes = hashes,
+                Ok(None) => {
+                    // Stream cerrado mientras esperábamos HashResponse.
+                    let _ = result_tx.send(StreamResult::StreamDead { stream_id }).await;
+                    return;
+                }
+                Err(_elapsed) => {
+                    warn!(fi, pi, "timeout esperando HashResponse — stream dead");
+                    let _ = result_tx.send(StreamResult::StreamDead { stream_id }).await;
+                    return;
+                }
+            }
             curr_piece = Some((fi, pi));
         }
 

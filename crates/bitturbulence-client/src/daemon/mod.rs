@@ -52,6 +52,8 @@ use crate::state::{ClientState, DownloadState};
 
 pub const HELLO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 pub const KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+/// Timeout para recibir HashResponse tras enviar HashRequest.
+pub const HASH_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 pub const ANNOUNCE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 pub const STATE_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 pub const PROTOCOL_VERSION: u8 = bitturbulence_protocol::PROTOCOL_VERSION;
