@@ -36,3 +36,6 @@ tokio-util   = { version = "0.7", features = ["codec"] }
 dirs-next    = "2"
 rand         = "0.8"
 quinn        = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

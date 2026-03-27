@@ -88,6 +88,12 @@ pub async fn run_peer_downloader(
     let (mut ctrl_w, mut ctrl_r) = conn.open_bidi_stream().await?;
     send_our_bitfields(ctx, &mut ctrl_w).await?;
 
+    // ── Comprobar si el flow ya está completo antes de abrir streams ────
+    let mut complete_rx = ctx.complete_tx.subscribe();
+    if *complete_rx.borrow() {
+        return Ok(());
+    }
+
     // ── Streams 3…N: datos por bloque ───────────────────────────────────
     let num_files = ctx.meta.files.len();
     let (result_tx, mut result_rx) = mpsc::channel::<StreamResult>(MAX_STREAMS * 8);
@@ -279,6 +285,11 @@ pub async fn run_peer_downloader(
 
             _ = ka_timer.tick() => {
                 ctrl_w.send(Message::KeepAlive).await?;
+            }
+
+            _ = complete_rx.changed() => {
+                // El flow se completó (esta u otra conexión verificó la última pieza).
+                return Ok(());
             }
         }
     }
