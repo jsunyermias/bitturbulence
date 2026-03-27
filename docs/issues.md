@@ -4,7 +4,6 @@ Ordenados de más a menos prioritario. Actualizado: 2026-03-27.
 
 | # | Título | Prioridad |
 |---|--------|-----------|
-| [#31](https://github.com/jsunyermias/bitturbulence/issues/31) | Propagación de HavePiece a todos los peers conectados (filler) | 🔴 Alta |
 | [#28](https://github.com/jsunyermias/bitturbulence/issues/28) | Daemon en background + IPC Unix socket | 🟠 Media-alta |
 | [#21](https://github.com/jsunyermias/bitturbulence/issues/21) | `submarine flow create`: herramienta nativa Rust para generar `.bitflow` | 🟠 Media-alta |
 | [#26](https://github.com/jsunyermias/bitturbulence/issues/26) | Multiplexación adaptativa: ajuste de streams según endgame e inestabilidad | 🟠 Media |
