@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio::time::interval;
-use tracing::{debug, info};
+use tracing::{debug, info, Instrument, Span};
 
 use bitturbulence_pieces::BlockTask;
 use bitturbulence_protocol::Message;
@@ -123,14 +123,10 @@ pub async fn run_peer_downloader(
     for _ in 0..DEFAULT_STREAMS {
         let (w, r) = conn.open_bidi_stream().await?;
         let (task_tx, task_rx) = mpsc::channel::<BlockTask>(1);
-        tokio::spawn(download_stream_worker(
-            next_id,
-            w,
-            r,
-            task_rx,
-            result_tx.clone(),
-            ctx.clone(),
-        ));
+        tokio::spawn(
+            download_stream_worker(next_id, w, r, task_rx, result_tx.clone(), ctx.clone())
+                .instrument(Span::current()),
+        );
         slots.insert(
             next_id,
             StreamSlot {
@@ -204,14 +200,17 @@ pub async fn run_peer_downloader(
                         let id = next_id;
                         next_id += 1;
                         let (task_tx, task_rx) = mpsc::channel::<BlockTask>(1);
-                        tokio::spawn(download_stream_worker(
-                            id,
-                            w,
-                            r,
-                            task_rx,
-                            result_tx.clone(),
-                            ctx.clone(),
-                        ));
+                        tokio::spawn(
+                            download_stream_worker(
+                                id,
+                                w,
+                                r,
+                                task_rx,
+                                result_tx.clone(),
+                                ctx.clone(),
+                            )
+                            .instrument(Span::current()),
+                        );
                         let key = (task.fi, task.pi, task.bi);
                         let mut slot = StreamSlot {
                             task_tx,

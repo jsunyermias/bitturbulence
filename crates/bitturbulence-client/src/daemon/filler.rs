@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use tokio::time::interval;
-use tracing::{debug, info};
+use tracing::{debug, info, Instrument, Span};
 
 use bitturbulence_protocol::Message;
 use bitturbulence_transport::PeerConnection;
@@ -54,7 +54,9 @@ pub async fn run_peer_filler(
             stream = conn.accept_bidi_stream() => {
                 match stream {
                     Ok((w, r)) => {
-                        tokio::spawn(serve_data_stream(w, r, ctx.clone()));
+                        tokio::spawn(
+                            serve_data_stream(w, r, ctx.clone()).instrument(Span::current()),
+                        );
                     }
                     Err(e) => {
                         tracing::debug!("accept data stream: {e}");
