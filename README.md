@@ -1,7 +1,7 @@
 # bitturbulence
 
 Implementación experimental del protocolo BitTurbulence: transferencia de archivos P2P sobre QUIC, escrita en Rust. Inspirada en BitTorrent. Básicamente es una reescritura de BitTorrent v2 en Rust usando Claude sobre el que quiero aplicar algunos cambios.
-El objetivo es que funcione sobre QUIC, que la asignación del tamaño de pieza sea adaptativo según el tamaño de archivo (y que los archivos no compartan piezas) dentro de cada torrent —que aquí de ahora en adelante se llamarán flows (bitflows) —, que se pueda predefinir la prioridad de cada archivo dentro de un mismo flow al momento de crearlo y a la vez se pueda precisar mejor esa prioridad, que haya deduplicación entre flows que comparten piezas, que pueda ajustarse un ancho de banda por archivo (solo a nivel de cliente, no predefinido), que se puedan desarrollar plugins que cambien algunos comportamientos o añadan funciones e implementar mejoras para peers móviles o redes con restricciones (CG-NAT)
+El objetivo es que funcione sobre QUIC, que la asignación del tamaño de pieza sea adaptativo según el tamaño de archivo (y que los archivos no compartan piezas) dentro de cada torrent —que aquí, de ahora en adelante, se llamarán flows (bitflows) —, que se pueda predefinir la prioridad de cada archivo dentro de un mismo flow al momento de crearlo y a la vez se pueda precisar mejor esa prioridad, que haya deduplicación entre flows que comparten piezas, que pueda ajustarse un ancho de banda por archivo (solo a nivel de cliente, no predefinido), que se puedan desarrollar plugins que cambien algunos comportamientos o añadan funciones e implementar mejoras para peers móviles o redes con restricciones (CG-NAT)
 
 ## Características
 
