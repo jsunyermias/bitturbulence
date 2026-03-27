@@ -28,6 +28,7 @@ Ordenados de más a menos prioritario. Actualizado: 2026-03-27.
 
 | # | Título | Commit |
 |---|--------|--------|
+| — | Batería de tests: scheduler_actor, context, have_persist (154 tests total) | 779619d |
 | [#36](https://github.com/jsunyermias/bitturbulence/issues/36) | Seeder automático: pasar a modo Seeding al completar la descarga | f4c90ee |
 | [#29](https://github.com/jsunyermias/bitturbulence/issues/29) | Integrar DHT con descubrimiento de peers en el daemon | c9a8746 |
 | [#31](https://github.com/jsunyermias/bitturbulence/issues/31) | Propagación de HavePiece a todos los peers conectados | e3de67d |
