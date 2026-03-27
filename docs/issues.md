@@ -43,7 +43,6 @@ Ordenados por prioridad de implementación. Actualizado: 2026-03-27 (issues #88�
 | [#57](https://github.com/jsunyermias/bitturbulence/issues/57) | STUN client: resolver IP pública y puerto externo (RFC 5389) | 🟡 Media-baja |
 | [#58](https://github.com/jsunyermias/bitturbulence/issues/58) | Hole punching coordinado via tracker: intercambio de candidatos antes de conectar | 🟡 Media-baja |
 | [#59](https://github.com/jsunyermias/bitturbulence/issues/59) | TURN relay fallback cuando hole punching falla (RFC 5766) | 🟡 Media-baja |
-| [#60](https://github.com/jsunyermias/bitturbulence/issues/60) | Keepalive adaptativo para móviles: reducir KEEPALIVE_INTERVAL en background/batería | 🟡 Media-baja |
 | [#61](https://github.com/jsunyermias/bitturbulence/issues/61) | QUIC connection migration: mantener sesión al cambiar de red (WiFi ↔ 4G) | 🟡 Media-baja |
 | [#51](https://github.com/jsunyermias/bitturbulence/issues/51) | Índice global de bloques por hash: content-addressable store para deduplicación | 🟡 Media-baja |
 | [#52](https://github.com/jsunyermias/bitturbulence/issues/52) | Deduplicación al añadir flow: detectar y marcar piezas ya presentes en disco | 🟡 Media-baja |
@@ -53,8 +52,6 @@ Ordenados por prioridad de implementación. Actualizado: 2026-03-27 (issues #88�
 | [#73](https://github.com/jsunyermias/bitturbulence/issues/73) | Optimistic unchoke: desbloquear un peer aleatorio periódicamente para explorar capacidad | 🟡 Media-baja |
 | [#76](https://github.com/jsunyermias/bitturbulence/issues/76) | Mover al completar: mover archivos a directorio destino configurable tras verificación | 🟡 Media-baja |
 | [#77](https://github.com/jsunyermias/bitturbulence/issues/77) | Watch folder: monitorizar directorio y añadir automáticamente .bitflow nuevos | 🟡 Media-baja |
-| [#79](https://github.com/jsunyermias/bitturbulence/issues/79) | Importar .torrent estándar: convertir metainfo BitTorrent v1/v2 a .bitflow | 🟡 Media-baja |
-| [#80](https://github.com/jsunyermias/bitturbulence/issues/80) | Web seeds (BEP 19): descargar piezas via HTTP como fallback cuando no hay peers | 🟡 Media-baja |
 | [#81](https://github.com/jsunyermias/bitturbulence/issues/81) | IP filter / blocklist: rechazar conexiones de rangos de IP configurados (formato PeerGuardian) | 🟡 Media-baja |
 | [#84](https://github.com/jsunyermias/bitturbulence/issues/84) | Webhook on complete: llamar URL configurable (POST JSON) al terminar un flow | 🟡 Media-baja |
 | [#96](https://github.com/jsunyermias/bitturbulence/issues/96) | BEP 21 Partial seeds: anunciar al tracker qué archivos del flow están disponibles para subir | 🟡 Media-baja |
@@ -81,7 +78,6 @@ Ordenados por prioridad de implementación. Actualizado: 2026-03-27 (issues #88�
 | [#134](https://github.com/jsunyermias/bitturbulence/issues/134) | Persistencia de lista de peers: guardar peers conocidos en el estado de sesión para reconectar más rápido | 🟡 Media-baja |
 | [#135](https://github.com/jsunyermias/bitturbulence/issues/135) | BEP 9 ut_metadata: descargar metainfo .bitflow directamente desde peers del swarm (no solo tracker/DHT) | 🟡 Media-baja |
 | [#18](https://github.com/jsunyermias/bitturbulence/issues/18) | NAT traversal (épico, ver #57–#59 para subissues) | 🟡 Media-baja |
-| [#13](https://github.com/jsunyermias/bitturbulence/issues/13) | Cliente tracker HTTP/UDP estándar (compat. BitTorrent) | 🟡 Baja |
 | [#33](https://github.com/jsunyermias/bitturbulence/issues/33) | Streaming: prioridad automática de primeras piezas para reproducción progresiva | 🔵 Baja |
 | [#8](https://github.com/jsunyermias/bitturbulence/issues/8) | Choke/unchoke: gestión de slots de subida | 🔵 Baja |
 | [#62](https://github.com/jsunyermias/bitturbulence/issues/62) | Trait `BitTurbulencePlugin` con hooks: on_piece_verified, on_peer_connected, on_flow_complete | 🔵 Baja |
@@ -107,7 +103,6 @@ Ordenados por prioridad de implementación. Actualizado: 2026-03-27 (issues #88�
 | [#136](https://github.com/jsunyermias/bitturbulence/issues/136) | Piece deadlines: deadline temporal por pieza para garantizar entrega antes de un timestamp (streaming preciso) | 🔵 Baja |
 | [#137](https://github.com/jsunyermias/bitturbulence/issues/137) | Delayed Have batching: agrupar mensajes HavePiece en lotes para reducir overhead de protocolo | 🔵 Baja |
 | [#120](https://github.com/jsunyermias/bitturbulence/issues/120) | lt_trackers extension: intercambiar lista de trackers activos entre peers conectados | 🔵 Baja |
-| [#121](https://github.com/jsunyermias/bitturbulence/issues/121) | BEP 52 BitTorrent v2: leer metainfo v2 con SHA-256 y piece layers (para importar .torrent v2) | 🔵 Baja |
 | [#20](https://github.com/jsunyermias/bitturbulence/issues/20) | Limitación de velocidad: throttling global de subida/bajada | 🔵 Baja |
 | [#7](https://github.com/jsunyermias/bitturbulence/issues/7) | Pool de conexiones de peers con límite global | 🔵 Baja |
 | [#22](https://github.com/jsunyermias/bitturbulence/issues/22) | Vortex links: compartir flows sin `.bitflow` (`vortex://`) | 🔵 Baja |
@@ -115,6 +110,18 @@ Ordenados por prioridad de implementación. Actualizado: 2026-03-27 (issues #88�
 | [#25](https://github.com/jsunyermias/bitturbulence/issues/25) | Renombrar repositorio de quictorrent a bitturbulence | 🔵 Admin |
 | [#34](https://github.com/jsunyermias/bitturbulence/issues/34) | Soporte Windows: compilación y CI en Windows | 🔵 Baja |
 | [#35](https://github.com/jsunyermias/bitturbulence/issues/35) | Packaging: .deb, .rpm, Flatpak y Homebrew | 🔵 Baja |
+
+## Descartados
+
+Issues cerrados por ser innecesarios dado que bitturbulence es un protocolo propio sobre QUIC.
+
+| # | Título | Razón |
+|---|--------|-------|
+| [#13](https://github.com/jsunyermias/bitturbulence/issues/13) | Cliente tracker HTTP/UDP estándar (compat. BitTorrent) | Retrocompat: bitturbulence usa su propio tracker QUIC |
+| [#60](https://github.com/jsunyermias/bitturbulence/issues/60) | Keepalive adaptativo para móviles | Redundante: QUIC gestiona keepalives a nivel de transporte via `max_idle_timeout` |
+| [#79](https://github.com/jsunyermias/bitturbulence/issues/79) | Importar .torrent estándar: convertir BitTorrent v1/v2 a .bitflow | Retrocompat: bitturbulence no es un cliente TCP BitTorrent |
+| [#80](https://github.com/jsunyermias/bitturbulence/issues/80) | Web seeds BEP 19: descargar piezas via HTTP | Retrocompat: los seeds son peers QUIC, no HTTP endpoints |
+| [#121](https://github.com/jsunyermias/bitturbulence/issues/121) | BEP 52 BitTorrent v2: leer metainfo v2 con SHA-256 | Retrocompat: dependía de #79, que se descarta |
 
 ## Cerrados recientemente
 
