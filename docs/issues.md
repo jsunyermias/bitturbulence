@@ -4,8 +4,6 @@ Ordenados de más a menos prioritario. Actualizado: 2026-03-27.
 
 | # | Título | Prioridad |
 |---|--------|-----------|
-| [#26](https://github.com/jsunyermias/bitturbulence/issues/26) | Multiplexación adaptativa: ajuste de streams según endgame e inestabilidad | 🟠 Media |
-| [#32](https://github.com/jsunyermias/bitturbulence/issues/32) | Verificación Merkle incremental via HashRequest/HashResponse | 🟠 Media |
 | [#23](https://github.com/jsunyermias/bitturbulence/issues/23) | `submarine status`: progreso en tiempo real (velocidad, ETA, peers activos) | 🟡 Media-baja |
 | [#30](https://github.com/jsunyermias/bitturbulence/issues/30) | Velocímetro: estadísticas de velocidad en tiempo real | 🟡 Media-baja |
 | [#18](https://github.com/jsunyermias/bitturbulence/issues/18) | NAT traversal: STUN + UDP hole punching + relay TURN | 🟡 Media-baja |
@@ -25,6 +23,8 @@ Ordenados de más a menos prioritario. Actualizado: 2026-03-27.
 
 | # | Título | Commit |
 |---|--------|--------|
+| [#32](https://github.com/jsunyermias/bitturbulence/issues/32) | Verificación Merkle incremental via HashRequest/HashResponse | 1b5d3ee |
+| [#26](https://github.com/jsunyermias/bitturbulence/issues/26) | Multiplexación adaptativa: scale-down de data streams | 72f5a65 |
 | [#28](https://github.com/jsunyermias/bitturbulence/issues/28) | Daemon en background + IPC Unix socket | 4f3f8c8 |
 | [#21](https://github.com/jsunyermias/bitturbulence/issues/21) | `submarine flow create`: herramienta nativa Rust para generar `.bitflow` | 9fd9553 |
 | — | Batería de tests: scheduler_actor, context, have_persist (154 tests total) | 779619d |
