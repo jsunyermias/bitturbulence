@@ -107,7 +107,7 @@ impl FlowCtx {
 
     /// Bitfield de piezas que tenemos completas para el archivo `fi`.
     pub async fn our_bitfield(&self, fi: usize) -> Vec<bool> {
-        self.have.lock().await[fi].clone()
+        self.have.lock().await.get(fi).cloned().unwrap_or_default()
     }
 
     /// Verifica la raíz Merkle de la pieza usando los hashes de bloque
