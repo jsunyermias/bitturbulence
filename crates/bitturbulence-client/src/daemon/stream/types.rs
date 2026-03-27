@@ -154,4 +154,16 @@ mod tests {
             "SNUB_TIMEOUT debe ser al menos 30s para no snubbear peers lentos legítimos"
         );
     }
+
+    #[test]
+    fn snub_disconnect_threshold_is_at_least_two() {
+        // El threshold debe ser > 1 para que el peer tenga al menos una segunda
+        // oportunidad antes de ser desconectado (un único timeout puede ser
+        // congestion transitoria).
+        use super::super::super::drainer::SNUB_DISCONNECT_THRESHOLD;
+        assert!(
+            SNUB_DISCONNECT_THRESHOLD >= 2,
+            "threshold demasiado agresivo: desconectaría tras un único timeout"
+        );
+    }
 }

@@ -56,6 +56,11 @@ const INSTABILITY_FAIL_THRESHOLD: u32 = 3;
 /// Bloques completados con éxito tras los que se resetea el contador de fallos.
 const INSTABILITY_RESET_WINDOW: u32 = 32;
 
+/// Timeouts de bloque consecutivos sin ningún `BlockOk` de por medio tras los
+/// cuales se desconecta el peer definitivamente.
+/// Con SNUB_TIMEOUT=60s esto equivale a ~5 minutos de inactividad total.
+pub(crate) const SNUB_DISCONNECT_THRESHOLD: u32 = 5;
+
 // ── Handshake saliente ────────────────────────────────────────────────────────
 
 async fn outbound_handshake(
@@ -143,9 +148,11 @@ pub async fn run_peer_downloader(
     // Contadores para detección de inestabilidad.
     let mut recent_fails: u32 = 0;
     let mut blocks_ok: u32 = 0;
-    // El peer está snubbed si no respondió a un Request en SNUB_TIMEOUT.
-    // Mientras esté snubbed solo se mantiene 1 stream activo.
-    let mut snubbed = false;
+    // Timeouts de bloque consecutivos sin BlockOk de por medio.
+    //   0                          → normal
+    //   1 ..< SNUB_DISCONNECT_THRESHOLD → snubbed (1 stream activo)
+    //   >= SNUB_DISCONNECT_THRESHOLD    → desconectar
+    let mut snub_streak: u32 = 0;
 
     // ── Bucle coordinador ──────────────────────────────────────────────
     loop {
@@ -158,7 +165,7 @@ pub async fn run_peer_downloader(
         let unstable = recent_fails >= INSTABILITY_FAIL_THRESHOLD;
         let endgame = ctx.sched.total_pending().await <= ENDGAME_THRESHOLD;
         let endgame_mode = unstable || endgame;
-        let max_active = if snubbed {
+        let max_active = if snub_streak > 0 {
             1
         } else if endgame_mode {
             MAX_STREAMS
@@ -334,8 +341,8 @@ pub async fn run_peer_downloader(
                             recent_fails = 0;
                             blocks_ok    = 0;
                         }
-                        // El peer respondió: ya no está snubbed.
-                        snubbed = false;
+                        // El peer respondió: resetear streak de snubbing.
+                        snub_streak = 0;
                     }
                     Some(StreamResult::BlockFail { stream_id, fi, pi, bi }) => {
                         if let Some(slot) = slots.get_mut(&stream_id) {
@@ -349,8 +356,18 @@ pub async fn run_peer_downloader(
                             slot.active_block = None;
                         }
                         ctx.sched.block_failed(fi, pi, bi).await;
-                        snubbed = true;
-                        tracing::warn!(fi, pi, bi, "peer snubbed: no respondió en SNUB_TIMEOUT");
+                        snub_streak += 1;
+                        tracing::warn!(
+                            fi, pi, bi,
+                            snub_streak,
+                            threshold = SNUB_DISCONNECT_THRESHOLD,
+                            "peer snubbed: no respondió en SNUB_TIMEOUT"
+                        );
+                        if snub_streak >= SNUB_DISCONNECT_THRESHOLD {
+                            return Err(anyhow!(
+                                "peer persistently snubbed ({snub_streak} timeouts consecutivos)"
+                            ));
+                        }
                     }
                     Some(StreamResult::StreamDead { stream_id }) => {
                         if let Some(slot) = slots.remove(&stream_id) {
