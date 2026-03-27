@@ -4,7 +4,6 @@ Ordenados por prioridad de implementación. Actualizado: 2026-03-27.
 
 | # | Título | Prioridad |
 |---|--------|-----------|
-| [#27](https://github.com/jsunyermias/bitturbulence/issues/27) | CI pipeline: clippy --deny warnings + cargo test en cada PR | 🟠 Media-alta |
 | [#44](https://github.com/jsunyermias/bitturbulence/issues/44) | Logging estructurado: tracing spans con peer_id/addr/info_hash por conexión | 🟠 Media-alta |
 | [#38](https://github.com/jsunyermias/bitturbulence/issues/38) | Filler: procesar mensajes Cancel para evitar servir bloques ya cancelados | 🟠 Media-alta |
 | [#41](https://github.com/jsunyermias/bitturbulence/issues/41) | Límite de conexiones simultáneas de peers + evicción LRU | 🟠 Media-alta |
@@ -33,6 +32,7 @@ Ordenados por prioridad de implementación. Actualizado: 2026-03-27.
 
 | # | Título | Commit |
 |---|--------|--------|
+| [#27](https://github.com/jsunyermias/bitturbulence/issues/27) | CI pipeline: clippy --deny warnings + cargo test + rustfmt | f4f3458 |
 | [#32](https://github.com/jsunyermias/bitturbulence/issues/32) | Verificación Merkle incremental via HashRequest/HashResponse | 1b5d3ee |
 | [#26](https://github.com/jsunyermias/bitturbulence/issues/26) | Multiplexación adaptativa: scale-down de data streams | 72f5a65 |
 | [#28](https://github.com/jsunyermias/bitturbulence/issues/28) | Daemon en background + IPC Unix socket | 4f3f8c8 |
