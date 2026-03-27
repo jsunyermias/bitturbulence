@@ -52,16 +52,15 @@ const INSTABILITY_FAIL_THRESHOLD: u32 = 3;
 /// Bloques completados con éxito tras los que se resetea el contador de fallos.
 const INSTABILITY_RESET_WINDOW: u32 = 32;
 
-// ── Bucle del drainer (conexión saliente) ─────────────────────────────────────
+// ── Handshake saliente ────────────────────────────────────────────────────────
 
-pub async fn run_peer_downloader(
+async fn outbound_handshake(
     conn:    &PeerConnection,
-    ctx:     &Arc<FlowCtx>,
+    ctx:     &FlowCtx,
     peer_id: &[u8; 32],
 ) -> Result<()> {
     use bitturbulence_protocol::AuthPayload;
 
-    // ── Stream 1: Hello / HelloAck ──────────────────────────────────────
     let (mut hello_w, mut hello_r) = conn.open_bidi_stream().await?;
 
     hello_w.send(Message::Hello {
@@ -76,13 +75,21 @@ pub async fn run_peer_downloader(
         .ok_or_else(|| anyhow!("disconnected during hello"))??;
 
     match ack {
-        Message::HelloAck { accepted: true, .. } => {}
+        Message::HelloAck { accepted: true, .. } => Ok(()),
         Message::HelloAck { accepted: false, reason, .. } =>
-            return Err(anyhow!("hello rejected: {}", reason.unwrap_or_default())),
-        _ => return Err(anyhow!("expected HelloAck")),
+            Err(anyhow!("hello rejected: {}", reason.unwrap_or_default())),
+        _ => Err(anyhow!("expected HelloAck")),
     }
-    drop(hello_w);
-    drop(hello_r);
+}
+
+// ── Bucle del drainer (conexión saliente) ─────────────────────────────────────
+
+pub async fn run_peer_downloader(
+    conn:    &PeerConnection,
+    ctx:     &Arc<FlowCtx>,
+    peer_id: &[u8; 32],
+) -> Result<()> {
+    outbound_handshake(conn, ctx, peer_id).await?;
 
     // ── Stream 2: control (Have*, KeepAlive, Bye) ───────────────────────
     let (mut ctrl_w, mut ctrl_r) = conn.open_bidi_stream().await?;
@@ -292,7 +299,9 @@ pub async fn run_peer_downloader(
                             piece_index: pi as u32,
                         }).await;
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        debug!("have_piece_rx lagged by {n}");
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
                 }
             }

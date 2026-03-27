@@ -128,17 +128,18 @@ impl FlowCtx {
         let computed    = piece_root_from_block_hashes(&block_hashes);
         let piece_bytes = self.meta.files[fi].piece_len(pi) as u64;
         if &computed == expected {
-            self.have.lock().await[fi][pi as usize] = true;
+            let have_snapshot = {
+                let mut have = self.have.lock().await;
+                have[fi][pi as usize] = true;
+                have.clone()
+            };
             let _ = self.have_piece_tx.send((fi, pi));
-            {
-                let have_snapshot = self.have.lock().await.clone();
-                let sp = self.save_path.clone();
-                tokio::task::spawn_blocking(move || {
-                    if let Err(e) = bitturbulence_pieces::save_have(&sp, &have_snapshot) {
-                        tracing::warn!("persist have: {e}");
-                    }
-                });
-            }
+            let sp = self.save_path.clone();
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = bitturbulence_pieces::save_have(&sp, &have_snapshot) {
+                    tracing::warn!("persist have: {e}");
+                }
+            });
             self.sched.mark_piece_verified(fi, pi).await;
             self.downloaded.fetch_add(piece_bytes, Ordering::Relaxed);
             info!(fi, pi, bytes = piece_bytes, "piece merkle root ok");

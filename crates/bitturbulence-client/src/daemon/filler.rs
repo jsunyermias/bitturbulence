@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use tokio::time::interval;
-use tracing::info;
+use tracing::{debug, info};
 
 use bitturbulence_protocol::Message;
 use bitturbulence_transport::PeerConnection;
@@ -71,7 +71,9 @@ pub async fn run_peer_filler(
                             piece_index: pi as u32,
                         }).await;
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        debug!("have_piece_rx lagged by {n}");
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
                 }
             }

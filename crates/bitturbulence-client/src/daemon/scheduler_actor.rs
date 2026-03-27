@@ -195,29 +195,32 @@ async fn run_actor(mut schedulers: Vec<BlockScheduler>, mut rx: mpsc::Receiver<M
                 let _ = reply.send(n);
             }
             Msg::BlockDone { fi, pi, bi, hash, reply } => {
-                let ready = schedulers[fi].mark_block_done(pi, bi, hash);
+                let ready = schedulers.get_mut(fi)
+                    .map(|s| s.mark_block_done(pi, bi, hash))
+                    .unwrap_or(false);
                 let _ = reply.send(ready);
             }
             Msg::BlockFailed { fi, pi, bi } => {
-                schedulers[fi].mark_block_failed(pi, bi);
+                if let Some(s) = schedulers.get_mut(fi) { s.mark_block_failed(pi, bi); }
             }
             Msg::AddPeerBitfield { fi, bits } => {
-                schedulers[fi].add_peer_bitfield(&bits);
+                if let Some(s) = schedulers.get_mut(fi) { s.add_peer_bitfield(&bits); }
             }
             Msg::RemovePeerBitfield { fi, bits } => {
-                schedulers[fi].remove_peer_bitfield(&bits);
+                if let Some(s) = schedulers.get_mut(fi) { s.remove_peer_bitfield(&bits); }
             }
             Msg::AddPeerHave { fi, pi } => {
-                schedulers[fi].add_peer_have(pi);
+                if let Some(s) = schedulers.get_mut(fi) { s.add_peer_have(pi); }
             }
             Msg::PieceBlockHashes { fi, pi, reply } => {
-                let _ = reply.send(schedulers[fi].piece_block_hashes(pi));
+                let hashes = schedulers.get(fi).and_then(|s| s.piece_block_hashes(pi));
+                let _ = reply.send(hashes);
             }
             Msg::MarkPieceVerified { fi, pi } => {
-                schedulers[fi].mark_piece_verified(pi);
+                if let Some(s) = schedulers.get_mut(fi) { s.mark_piece_verified(pi); }
             }
             Msg::MarkPieceHashFailed { fi, pi } => {
-                schedulers[fi].mark_piece_hash_failed(pi);
+                if let Some(s) = schedulers.get_mut(fi) { s.mark_piece_hash_failed(pi); }
             }
             Msg::IsComplete { reply } => {
                 let ok = schedulers.iter().all(|s| s.is_complete());
