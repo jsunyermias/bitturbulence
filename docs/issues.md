@@ -1,6 +1,6 @@
 # Issues abiertos — bitturbulence
 
-Ordenados por prioridad de implementación. Actualizado: 2026-03-27.
+Ordenados por prioridad de implementación. Actualizado: 2026-03-27. Última revisión completa: 2026-03-27 (commit d6c705f).
 
 | # | Título | Prioridad |
 |---|--------|-----------|
